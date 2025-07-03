@@ -665,7 +665,57 @@ local function parseField(buf, offset, isbe, tree, depth)
     return offset
 end
 
--- Value parser for different PVA types
+-- EPICS timestamp conversion to human readable format
+local function formatEpicsTimestamp(seconds, nanoseconds)
+    -- EPICS epoch is January 1, 1990 00:00:00 UTC
+    -- Unix epoch is January 1, 1970 00:00:00 UTC
+    -- Difference: 631152000 seconds (20 years)
+    local unix_seconds = seconds + 631152000
+    local date_str = os.date("!%Y-%m-%d %H:%M:%S", unix_seconds)
+    return string.format("%s.%09d UTC", date_str, nanoseconds)
+end
+
+-- Enhanced alarm status decoder
+local function decodeAlarmStatus(severity, status)
+    local severity_names = {
+        [0] = "NO_ALARM",
+        [1] = "MINOR",
+        [2] = "MAJOR", 
+        [3] = "INVALID"
+    }
+    
+    local status_names = {
+        [0] = "NO_ALARM",
+        [1] = "READ",
+        [2] = "WRITE", 
+        [3] = "HIHI",
+        [4] = "HIGH",
+        [5] = "LOLO",
+        [6] = "LOW",
+        [7] = "STATE",
+        [8] = "COS",
+        [9] = "COMM",
+        [10] = "TIMEOUT",
+        [11] = "HWLIMIT",
+        [12] = "CALC",
+        [13] = "SCAN",
+        [14] = "LINK",
+        [15] = "SOFT",
+        [16] = "BAD_SUB",
+        [17] = "UDF",
+        [18] = "DISABLE",
+        [19] = "SIMM",
+        [20] = "READ_ACCESS",
+        [21] = "WRITE_ACCESS"
+    }
+    
+    local sev_name = severity_names[severity] or string.format("UNKNOWN(%d)", severity)
+    local stat_name = status_names[status] or string.format("UNKNOWN(%d)", status)
+    
+    return sev_name, stat_name
+end
+
+-- Enhanced value parser with Phase 4 features
 local function parseValue(buf, offset, field_type, isbe, tree, field_name)
     if not buf or offset >= buf:len() then
         return offset
@@ -683,7 +733,7 @@ local function parseValue(buf, offset, field_type, isbe, tree, field_name)
     elseif field_type == 0x20 then -- byte
         if offset < buf:len() then
             local value = buf(offset, 1):int()
-            tree:add(buf(offset, 1), string.format("%s: %d (byte)", field_name, value))
+            tree:add(buf(offset, 1), string.format("%s: %d (0x%02X) (byte)", field_name, value, value))
             return offset + 1
         end
         
@@ -701,10 +751,18 @@ local function parseValue(buf, offset, field_type, isbe, tree, field_name)
             return offset + 4
         end
         
-    elseif field_type == 0x23 then -- long
+    elseif field_type == 0x23 then -- long (enhanced timestamp support)
         if offset + 7 < buf:len() then
             local value = isbe and buf(offset, 8):int64() or buf(offset, 8):le_int64()
-            tree:add(buf(offset, 8), string.format("%s: %s (long)", field_name, tostring(value)))
+            local value_num = tonumber(tostring(value))
+            
+            -- Special formatting for timestamp fields
+            if field_name:match("time") or field_name:match("Time") or field_name:match("seconds") then
+                local formatted_time = formatEpicsTimestamp(value_num, 0)
+                tree:add(buf(offset, 8), string.format("%s: %s (%s) (long)", field_name, tostring(value), formatted_time))
+            else
+                tree:add(buf(offset, 8), string.format("%s: %s (long)", field_name, tostring(value)))
+            end
             return offset + 8
         end
         
@@ -722,19 +780,49 @@ local function parseValue(buf, offset, field_type, isbe, tree, field_name)
             return offset + 8
         end
         
-    elseif field_type == 0x60 then -- string
+    elseif field_type == 0x60 then -- string (enhanced)
         local str_len, new_offset = readPVASize(buf, offset, isbe)
         if new_offset + str_len <= buf:len() then
             local str_value = str_len > 0 and buf(new_offset, str_len):string() or ""
-            tree:add(buf(offset, new_offset - offset + str_len), string.format("%s: \"%s\" (string)", field_name, str_value))
+            
+            -- Special handling for common EPICS fields
+            if field_name == "message" and str_value == "" then
+                str_value = "<no alarm>"
+            end
+            
+            tree:add(buf(offset, new_offset - offset + str_len), string.format("%s: \"%s\" (string, %d chars)", field_name, str_value, str_len))
             return new_offset + str_len
         end
         
+    -- Phase 4: Array type support
+    elseif field_type >= 0x28 and field_type <= 0x2F then -- Array types
+        local element_type = field_type - 0x08 -- Convert to element type
+        local array_len, len_offset = readPVASize(buf, offset, isbe)
+        
+        if len_offset < buf:len() then
+            local array_tree = tree:add(buf(offset), string.format("%s: [%d elements] (array)", field_name, array_len))
+            offset = len_offset
+            
+            -- Parse first few elements
+            for i = 1, math.min(array_len, 10) do -- Limit display to 10 elements
+                if offset >= buf:len() then break end
+                offset = parseValue(buf, offset, element_type, isbe, array_tree, string.format("[%d]", i-1))
+            end
+            
+            if array_len > 10 then
+                array_tree:add(buf(0, 0), string.format("... (%d more elements)", array_len - 10))
+            end
+        end
+        
     else
-        -- For unknown types, just show raw bytes
-        local remaining = math.min(8, buf:len() - offset) -- Show max 8 bytes
+        -- For unknown types, show raw bytes with better formatting
+        local remaining = math.min(16, buf:len() - offset) -- Show max 16 bytes
         if remaining > 0 then
-            tree:add(buf(offset, remaining), string.format("%s: <raw %d bytes> (type 0x%02X)", field_name, remaining, field_type))
+            local hex_str = ""
+            for i = 0, remaining - 1 do
+                hex_str = hex_str .. string.format("%02X ", buf(offset + i, 1):uint())
+            end
+            tree:add(buf(offset, remaining), string.format("%s: %s(type 0x%02X, %d bytes)", field_name, hex_str, field_type, remaining))
             return offset + remaining
         end
     end
@@ -742,7 +830,7 @@ local function parseValue(buf, offset, field_type, isbe, tree, field_name)
     return offset
 end
 
--- Enhanced union value parser with discriminator support
+-- Enhanced union value parser with Phase 4 discriminator support
 local function parseUnionValue(buf, offset, union_fields, isbe, tree, union_name)
     if not buf or offset >= buf:len() or #union_fields == 0 then
         return offset
@@ -756,16 +844,86 @@ local function parseUnionValue(buf, offset, union_fields, isbe, tree, union_name
         return disc_offset
     end
     
-    local disc_tree = tree:add(buf(offset, disc_offset - offset), string.format("Active Choice: %d (%s)", discriminator, union_fields[discriminator + 1].name))
+    local active_field = union_fields[discriminator + 1]
+    local disc_tree = tree:add(buf(offset, disc_offset - offset), string.format("Active Choice: %d (%s)", discriminator, active_field.name))
     offset = disc_offset
     
-    -- Parse the active field value
-    local active_field = union_fields[discriminator + 1]
+    -- Special handling for common EPICS union types
+    if union_name == "alarm_t" then
+        -- Parse alarm union with enhanced status decoding
+        if active_field.name == "severity" and offset + 3 < buf:len() then
+            local severity = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
+            local sev_name, _ = decodeAlarmStatus(severity, 0)
+            tree:add(buf(offset, 4), string.format("severity: %d (%s)", severity, sev_name))
+            return offset + 4
+        elseif active_field.name == "status" and offset + 3 < buf:len() then
+            local status = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
+            local _, stat_name = decodeAlarmStatus(0, status)
+            tree:add(buf(offset, 4), string.format("status: %d (%s)", status, stat_name))
+            return offset + 4
+        end
+        
+    elseif union_name == "time_t" then
+        -- Parse timestamp union with enhanced formatting
+        if active_field.name == "secondsPastEpoch" and offset + 7 < buf:len() then
+            local seconds = isbe and buf(offset, 8):int64() or buf(offset, 8):le_int64()
+            local seconds_num = tonumber(tostring(seconds))
+            local formatted_time = formatEpicsTimestamp(seconds_num, 0)
+            tree:add(buf(offset, 8), string.format("secondsPastEpoch: %s (%s)", tostring(seconds), formatted_time))
+            return offset + 8
+        elseif active_field.name == "nanoseconds" and offset + 3 < buf:len() then
+            local nanos = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
+            tree:add(buf(offset, 4), string.format("nanoseconds: %d (%.3f ms)", nanos, nanos / 1000000.0))
+            return offset + 4
+        end
+    end
+    
+    -- Default parsing for other union types
     if active_field then
         offset = parseValue(buf, offset, active_field.type, isbe, tree, active_field.name)
     end
     
     return offset
+end
+
+-- Phase 4: Enhanced NT type detection and formatting
+local function detectNTType(nt_name)
+    if not nt_name then return "Unknown", {} end
+    
+    local nt_types = {
+        ["epics:nt/NTScalar:1.0"] = {
+            name = "NTScalar",
+            description = "Scalar value with optional alarm and timestamp",
+            fields = {"value", "alarm", "timeStamp"}
+        },
+        ["epics:nt/NTTable:1.0"] = {
+            name = "NTTable", 
+            description = "Table of columns with labels",
+            fields = {"labels", "value", "alarm", "timeStamp"}
+        },
+        ["epics:nt/NTImage:1.0"] = {
+            name = "NTImage",
+            description = "2D image data with attributes", 
+            fields = {"value", "dimension", "attribute", "alarm", "timeStamp"}
+        },
+        ["epics:nt/NTEnum:1.0"] = {
+            name = "NTEnum",
+            description = "Enumerated value with choices",
+            fields = {"value", "choices", "alarm", "timeStamp"}
+        },
+        ["epics:nt/NTMatrix:1.0"] = {
+            name = "NTMatrix",
+            description = "N-dimensional matrix data",
+            fields = {"value", "dimension", "alarm", "timeStamp"}
+        }
+    }
+    
+    local nt_info = nt_types[nt_name]
+    if nt_info then
+        return nt_info.name, nt_info
+    else
+        return "Custom NT", {name = "Custom", description = "User-defined normative type", fields = {}}
+    end
 end
 
 -- Structure to store field information during introspection parsing
@@ -863,7 +1021,13 @@ local function decodePVData(buf, pkt, t, isbe, label)
         offset = name_offset
         
         if union_name ~= "" then
+            -- Phase 4: Enhanced NT type detection
+            local nt_type, nt_info = detectNTType(union_name)
             pvd_tree:append_text(string.format(" \"%s\"", union_name))
+            
+            if nt_type ~= "Unknown" then
+                introspection_tree:add(buf(0, 0), string.format("NT Type: %s - %s", nt_type, nt_info.description))
+            end
         end
         
         -- Parse field count and fields (introspection)
@@ -877,7 +1041,7 @@ local function decodePVData(buf, pkt, t, isbe, label)
             -- Store field information
             main_field_info = FieldInfo:new(union_name, 0x80)
             
-            -- Parse fields (introspection)
+            -- Parse fields (introspection) with enhanced display
             for i = 1, math.min(field_count, 15) do
                 if offset >= buf:len() then break end
                 
@@ -950,67 +1114,73 @@ local function decodePVData(buf, pkt, t, isbe, label)
                 local disc_tree = values_tree:add(buf(offset, disc_offset - offset), string.format("Union Choice: %d", discriminator))
                 offset = disc_offset
                 
-                -- Parse value based on discriminator
+                -- Phase 4: Enhanced value parsing based on discriminator
                 if discriminator == 0 and offset + 3 < buf:len() then
-                    -- Choice 0 = "value" field (int type)
+                    -- Choice 0 = "value" field (int type) 
                     disc_tree:append_text(" (value)")
                     local int_val = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
-                    values_tree:add(buf(offset, 4), string.format("value: %d (int)", int_val))
+                    values_tree:add(buf(offset, 4), string.format("value: %d (int) [Primary Data]", int_val))
                     offset = offset + 4
+                    
                 elseif discriminator == 1 then
-                    -- Choice 1 = "alarm" union
+                    -- Choice 1 = "alarm" union - enhanced alarm parsing
                     disc_tree:append_text(" (alarm)")
-                    -- Parse nested union...
-                elseif discriminator == 2 then  
-                    -- Choice 2 = "timeStamp" field - could be int or string
+                    
+                    if offset < buf:len() then
+                        -- Parse alarm discriminator
+                        local alarm_disc, alarm_disc_offset = readPVASize(buf, offset, isbe)
+                        local alarm_tree = values_tree:add(buf(offset, alarm_disc_offset - offset), string.format("Alarm Choice: %d", alarm_disc))
+                        offset = alarm_disc_offset
+                        
+                        if alarm_disc == 0 and offset + 3 < buf:len() then
+                            -- severity
+                            local severity = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
+                            local sev_name, _ = decodeAlarmStatus(severity, 0)
+                            values_tree:add(buf(offset, 4), string.format("severity: %d (%s)", severity, sev_name))
+                            offset = offset + 4
+                        elseif alarm_disc == 1 and offset + 3 < buf:len() then
+                            -- status
+                            local status = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
+                            local _, stat_name = decodeAlarmStatus(0, status)
+                            values_tree:add(buf(offset, 4), string.format("status: %d (%s)", status, stat_name))
+                            offset = offset + 4
+                        elseif alarm_disc == 2 then
+                            -- message string
+                            local str_len, str_offset = readPVASize(buf, offset, isbe)
+                            if str_offset + str_len <= buf:len() then
+                                local str_val = str_len > 0 and buf(str_offset, str_len):string() or "<no alarm>"
+                                values_tree:add(buf(offset, str_offset - offset + str_len), string.format("message: \"%s\"", str_val))
+                                offset = str_offset + str_len
+                            end
+                        end
+                    end
+                    
+                elseif discriminator == 2 and offset + 3 < buf:len() then  
+                    -- Choice 2 = "timeStamp" field - enhanced timestamp parsing
                     disc_tree:append_text(" (timeStamp)")
                     
-                    if offset + 3 < buf:len() then
-                        -- Try parsing as int first
-                        local timestamp_val = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
-                        values_tree:add(buf(offset, 4), string.format("timeStamp: %d", timestamp_val))
-                        offset = offset + 4
+                    -- For introspectionOnly, timestamp is usually a simple int value
+                    local timestamp_val = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
+                    
+                    -- Enhanced timestamp display with multiple formats
+                    if timestamp_val < 1000000000 then
+                        -- Small value - likely a simple counter or userTag
+                        values_tree:add(buf(offset, 4), string.format("timeStamp: %d [Counter/Tag]", timestamp_val))
+                    else
+                        -- Large value - likely seconds since epoch
+                        local formatted_time = formatEpicsTimestamp(timestamp_val, 0)
+                        values_tree:add(buf(offset, 4), string.format("timeStamp: %d (%s)", timestamp_val, formatted_time))
                     end
+                    offset = offset + 4
+                    
                 else
                     disc_tree:append_text(" (unknown)")
                     if offset < buf:len() then
-                        values_tree:add(buf(offset), "Unknown value data")
+                        values_tree:add(buf(offset), string.format("Unknown field data (discriminator %d)", discriminator))
                     end
                 end
                 
-                -- Continue parsing if there's more data (multiple fields can be active)
-                while offset < buf:len() - 1 do
-                    local next_discriminator, next_disc_offset = readPVASize(buf, offset, isbe)
-                    
-                    if next_discriminator < 3 then -- Valid discriminator
-                        local next_disc_tree = values_tree:add(buf(offset, next_disc_offset - offset), string.format("Additional Field %d", next_discriminator))
-                        offset = next_disc_offset
-                        
-                        if next_discriminator == 0 and offset + 3 < buf:len() then
-                            -- "value" field
-                            local int_val = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
-                            values_tree:add(buf(offset, 4), string.format("value: %d (int)", int_val))
-                            offset = offset + 4
-                        elseif next_discriminator == 2 and offset + 3 < buf:len() then
-                            -- "timeStamp" field
-                            local timestamp_val = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
-                            values_tree:add(buf(offset, 4), string.format("timeStamp: %d", timestamp_val))
-                            offset = offset + 4
-                        else
-                            -- Unknown or complex field - try string parsing
-                            local str_len, str_offset = readPVASize(buf, offset, isbe)
-                            if str_offset + str_len <= buf:len() then
-                                local str_val = str_len > 0 and buf(str_offset, str_len):string() or ""
-                                values_tree:add(buf(offset, str_offset - offset + str_len), string.format("Field %d: \"%s\"", next_discriminator, str_val))
-                                offset = str_offset + str_len
-                            else
-                                break -- Can't parse further
-                            end
-                        end
-                    else
-                        break -- Invalid discriminator, stop parsing
-                    end
-                end
+                -- Note: For introspectionOnly frames, typically only one field is active at a time
             end
         end
         
