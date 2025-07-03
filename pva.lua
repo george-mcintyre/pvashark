@@ -368,7 +368,88 @@ local function skipPVStructureLabelString(buf, isbe)
     end
 end
 
--- PVData decoder function - Phase 1: Foundation
+-- PVData type constants (Phase 2)
+local PVD_TYPES = {
+    [0x00] = "null",
+    [0x01] = "introspectionOnly",
+    [0x08] = "boolean", 
+    [0x20] = "byte",
+    [0x21] = "short", 
+    [0x22] = "int",
+    [0x23] = "long",
+    [0x24] = "ubyte",
+    [0x25] = "ushort",
+    [0x26] = "uint", 
+    [0x27] = "ulong",
+    [0x2A] = "float",
+    [0x2B] = "double",
+    [0x40] = "byteArray",
+    [0x41] = "shortArray", 
+    [0x42] = "intArray",
+    [0x43] = "longArray",
+    [0x44] = "ubyteArray",
+    [0x45] = "ushortArray",
+    [0x46] = "uintArray",
+    [0x47] = "ulongArray",
+    [0x4A] = "floatArray",
+    [0x4B] = "doubleArray",
+    [0x50] = "boundedString",
+    [0x60] = "string",
+    [0x68] = "stringArray",
+    [0x7F] = "structure",
+    [0x80] = "union",
+    [0x81] = "unionArray",
+    [0x82] = "structureArray"
+}
+
+-- Helper function to read PVData size (Phase 2)
+local function readPVSize(buf, offset, isbe)
+    if not buf or offset >= buf:len() then
+        return 0, offset
+    end
+    
+    local size_byte = buf(offset, 1):uint()
+    if size_byte < 0xFE then
+        return size_byte, offset + 1
+    elseif size_byte == 0xFE then
+        if offset + 2 >= buf:len() then return 0, offset end
+        local size = isbe and buf(offset + 1, 2):uint() or buf(offset + 1, 2):le_uint()
+        return size, offset + 3
+    elseif size_byte == 0xFF then
+        if offset + 4 >= buf:len() then return 0, offset end
+        local size = isbe and buf(offset + 1, 4):uint() or buf(offset + 1, 4):le_uint()
+        return size, offset + 5
+    end
+    return 0, offset
+end
+
+-- Helper function to read PVData string (Phase 2)
+local function readPVString(buf, offset, isbe)
+    local str_len, new_offset = readPVSize(buf, offset, isbe)
+    if str_len == 0 or new_offset + str_len > buf:len() then
+        return "", new_offset
+    end
+    local str = buf(new_offset, str_len):string()
+    return str, new_offset + str_len
+end
+
+-- PVData field parser (Phase 2) - Simplified for debugging
+local function parsePVField(buf, offset, isbe, tree, depth)
+    if offset >= buf:len() or depth > 10 then
+        return offset
+    end
+    
+    -- Just show the type byte for now
+    local type_byte = buf(offset, 1):uint()
+    local type_name = PVD_TYPES[type_byte] or string.format("unknown(0x%02X)", type_byte)
+    
+    -- Simple display without complex tree operations
+    tree:append_text(string.format(" [Type: 0x%02X=%s]", type_byte, type_name))
+    
+    return offset + 1
+end
+
+-- PVData decoder function - Phase 2: Structure parsing
 local function decodePVData(buf, pkt, t, isbe, label)
     if not buf or buf:len() == 0 then
         return
@@ -377,19 +458,46 @@ local function decodePVData(buf, pkt, t, isbe, label)
     -- Create subtree for PVData
     local pvd_tree = t:add(fpvd_struct, buf, label or "PVData")
     
-    -- Phase 1: Just show raw data for now, will expand in future phases
-    if buf:len() > 0 then
-        pvd_tree:add(fpvd_introspection, buf(0, math.min(buf:len(), 32)), "Introspection (first 32 bytes)")
-        if buf:len() > 32 then
-            pvd_tree:add(fpvd_value, buf(32), "Data Values")
-        end
+    -- Debug: Show first few bytes of buffer using proper Wireshark API
+    if buf:len() >= 4 then
+        local debug_buf = buf(0, 4)
+        pvd_tree:add(fpvd_introspection, debug_buf, string.format("Debug: First 4 bytes = 0x%02X 0x%02X 0x%02X 0x%02X", 
+                     buf(0,1):uint(), buf(1,1):uint(), buf(2,1):uint(), buf(3,1):uint()))
     end
     
-    -- TODO: Future phases will add:
-    -- - Type parsing and introspection decoding
-    -- - Field name extraction
-    -- - Value decoding by type
-    -- - NT (Normative Type) recognition
+    -- Phase 2: Parse introspection and data sections
+    local offset = 0
+    
+    if buf:len() > 0 then
+        -- Try to parse as introspection + data
+        local intro_tree = pvd_tree:add(fpvd_introspection, buf(0, math.min(buf:len(), 64)), string.format("Introspection (%d bytes total)", buf:len()))
+        
+        -- Parse the root structure
+        local parsed_offset = parsePVField(buf, offset, isbe, intro_tree, 0)
+        
+        -- Add debugging info
+        if parsed_offset > offset then
+            intro_tree:append_text(string.format(" [parsed %d bytes]", parsed_offset - offset))
+        end
+        
+        -- Show remaining data as values
+        if parsed_offset < buf:len() then
+            local remaining_buf = buf(parsed_offset)
+            pvd_tree:add(fpvd_value, remaining_buf, string.format("Data Values (%d bytes at offset %d)", remaining_buf:len(), parsed_offset))
+        elseif parsed_offset == buf:len() then
+            pvd_tree:append_text(" [No data values - introspection only]")
+        end
+        
+        -- Fallback: if parsing failed, show raw data
+        if parsed_offset <= offset then
+            intro_tree:append_text(" [parsing failed, showing raw data]")
+            local fallback_len = math.min(buf:len(), 16)
+            intro_tree:add(fpvd_introspection, buf(0, fallback_len), "Raw Introspection (first 16 bytes)")
+            if buf:len() > 16 then
+                pvd_tree:add(fpvd_value, buf(16), "Raw Data Values")
+            end
+        end
+    end
     
     return pvd_tree
 end
