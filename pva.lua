@@ -595,6 +595,17 @@ local function pva_client_validate (buf, pkt, t, isbe, cmd)
 	has_authz_extensions = true
     end
     
+    -- Add appropriate info message based on method
+    if method:string():lower() == "x509" then
+        pkt.cols.info:append("X509 AUTHZ, ")
+    elseif has_authz_extensions then
+        if authzsize == 2 then
+            pkt.cols.info:append("CA AUTHZ, ")
+        elseif authzsize == 3 then
+            pkt.cols.info:append("PVA AUTHZ, ")
+        end
+    end
+    
     -- Start with basic auth entry for the method  
     local entry_tree = t:add("AuthZ Entry 1")
     entry_tree:add(fvalid_method, method)
@@ -603,10 +614,9 @@ local function pva_client_validate (buf, pkt, t, isbe, cmd)
     if has_authz_extensions and (buf and buf:len() > 0)
     then
 
-	local peer, method, authority, account, isTLS
+	local peer, method_var, authority, account, isTLS
 	if authzsize == 2
 	then
-	    pkt.cols.info:append("CA AUTHZ, ")
 	    buf = skipPVStructureLabelString(buf, isbe)
 	    buf = skipPVStructureLabelString(buf, isbe)
 
@@ -619,7 +629,6 @@ local function pva_client_validate (buf, pkt, t, isbe, cmd)
 	    
 	elseif authzsize == 3
 	then
-	    pkt.cols.info:append("PVA AUTHZ, ")
 	    buf = skipPVStructureLabelString(buf, isbe)
 	    buf = skipPVStructureLabelString(buf, isbe)
 	    buf = skipPVStructureLabelString(buf, isbe)
