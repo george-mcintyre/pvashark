@@ -319,7 +319,7 @@ local function decodeSize(buf, isbe)
     if buf:len() < 1 then
         return 0, buf
     end
-    
+
     local s0 = buf(0,1):uint()
     if s0==255 then
         return 0, buf:len() > 1 and buf(1) or buf -- special nil string? treat as zero
@@ -342,15 +342,15 @@ local function decodeString(buf, isbe)
     if buf:len() == 0 then
         return buf(0,0), nil
     end
-    
+
     local s, remaining_buf = decodeSize(buf, isbe)
-    
+
     -- Check if we have enough bytes for the string
     if not remaining_buf or remaining_buf:len() < s then
         -- Not enough data, return what we have
         return buf(0, math.min(s, buf:len())), nil
     end
-    
+
     if s == remaining_buf:len() then
         return remaining_buf(0,s), nil
     else
@@ -373,19 +373,19 @@ end
 local PVD_TYPES = {
     [0x00] = "null",
     [0x01] = "introspectionOnly",
-    [0x08] = "boolean", 
+    [0x08] = "boolean",
     [0x20] = "byte",
-    [0x21] = "short", 
+    [0x21] = "short",
     [0x22] = "int",
     [0x23] = "long",
     [0x24] = "ubyte",
     [0x25] = "ushort",
-    [0x26] = "uint", 
+    [0x26] = "uint",
     [0x27] = "ulong",
     [0x2A] = "float",
     [0x2B] = "double",
     [0x40] = "byteArray",
-    [0x41] = "shortArray", 
+    [0x41] = "shortArray",
     [0x42] = "intArray",
     [0x43] = "longArray",
     [0x44] = "ubyteArray",
@@ -408,7 +408,7 @@ local function readPVSize(buf, offset, isbe)
     if not buf or offset >= buf:len() then
         return 0, offset
     end
-    
+
     local size_byte = buf(offset, 1):uint()
     if size_byte < 0xFE then
         return size_byte, offset + 1
@@ -439,37 +439,37 @@ local function parsePVField(buf, offset, isbe, tree, depth)
     if offset >= buf:len() or depth > 10 then
         return offset
     end
-    
+
     local type_byte = buf(offset, 1):uint()
     local type_name = PVD_TYPES[type_byte] or string.format("unknown(0x%02X)", type_byte)
-    
+
     -- Create field subtree with proper API
     local field_tree = tree:add(fpvd_field, buf(offset, 1), string.format("Field [%s] (0x%02X)", type_name, type_byte))
     offset = offset + 1
-    
+
     -- Handle different field types
     if type_byte == 0x01 then -- introspectionOnly
         field_tree:append_text(" (introspection only - no data)")
-        
+
     elseif type_byte == 0x7F then -- structure
         if offset < buf:len() then
             local field_count, new_offset = readPVSize(buf, offset, isbe)
             field_tree:append_text(string.format(" (%d fields)", field_count))
             offset = new_offset
-            
+
             -- Sanity check field count
             if field_count > 50 then
                 field_tree:append_text(" [Warning: High field count, limiting to 20]")
                 field_count = 20 -- Limit to prevent runaway parsing
             end
-            
+
             -- Parse field names and types
             for i = 1, field_count do
-                if offset >= buf:len() then 
+                if offset >= buf:len() then
                     field_tree:append_text(" [Error: Unexpected end of buffer]")
-                    break 
+                    break
                 end
-                
+
                 -- Read field name
                 local field_name, name_offset = readPVString(buf, offset, isbe)
                 if field_name and field_name ~= "" then
@@ -479,12 +479,12 @@ local function parsePVField(buf, offset, isbe, tree, depth)
                     end
                 end
                 offset = name_offset
-                
+
                 -- Recursively parse field type
                 offset = parsePVField(buf, offset, isbe, field_tree, depth + 1)
             end
         end
-        
+
     elseif type_byte == 0x80 then -- union
         if offset < buf:len() then
             local union_name, name_offset = readPVString(buf, offset, isbe)
@@ -495,38 +495,35 @@ local function parsePVField(buf, offset, isbe, tree, depth)
                     field_tree:add(fpvd_field_name, buf(offset, name_len), union_name)
                 end
                 offset = name_offset
-                
+
                 -- Parse union fields (similar to structure)
                 if offset < buf:len() then
                     local field_count, new_offset = readPVSize(buf, offset, isbe)
                     field_tree:append_text(string.format(" (%d fields)", field_count))
                     offset = new_offset
-                    
+
                     -- Limit field count
                     if field_count > 50 then
                         field_count = 20
                     end
-                    
+
                     for i = 1, field_count do
                         if offset >= buf:len() then break end
-                        
+
                         -- Read field name
                         local field_name, name_offset = readPVString(buf, offset, isbe)
                         if field_name and field_name ~= "" then
-                            local name_len = name_offset - offset
-                            if name_len > 0 and name_len <= buf:len() - offset then
-                                field_tree:add(fpvd_field_name, buf(offset, name_len), field_name)
-                            end
+                            field_tree:add(fpvd_field_name, buf(offset, name_len), field_name)
                         end
                         offset = name_offset
-                        
+
                         -- Recursively parse field type
                         offset = parsePVField(buf, offset, isbe, field_tree, depth + 1)
                     end
                 end
             end
         end
-        
+
     elseif type_byte == 0x60 then -- string
         field_tree:append_text(" (string type)")
     elseif type_byte >= 0x20 and type_byte <= 0x2B then -- numeric types
@@ -544,7 +541,7 @@ local function parsePVField(buf, offset, isbe, tree, depth)
     else
         field_tree:append_text(string.format(" (unhandled type 0x%02X)", type_byte))
     end
-    
+
     return offset
 end
 
@@ -553,9 +550,9 @@ local function readPVASize(buf, offset, isbe)
     if not buf or offset >= buf:len() then
         return 0, offset
     end
-    
+
     local size_byte = buf(offset, 1):uint()
-    
+
     if size_byte < 0xFE then
         -- Single byte size (0-253)
         return size_byte, offset + 1
@@ -570,7 +567,7 @@ local function readPVASize(buf, offset, isbe)
         local size = isbe and buf(offset + 1, 4):uint() or buf(offset + 1, 4):le_uint()
         return size, offset + 5
     end
-    
+
     return 0, offset
 end
 
@@ -580,19 +577,19 @@ local function readPVAString(buf, offset, isbe, tree, label)
     if str_len == 0 or new_offset + str_len > buf:len() then
         return "", new_offset
     end
-    
+
     local str_data = buf(new_offset, str_len):string()
-    
+
     -- Add to tree if provided
     if tree then
-        local str_tree = tree:add(buf(offset, new_offset - offset + str_len), 
+        local str_tree = tree:add(buf(offset, new_offset - offset + str_len),
                                  string.format("%s: \"%s\"", label or "String", str_data))
         if new_offset - offset > 1 then
             str_tree:add(buf(offset, new_offset - offset), string.format("Length: %d", str_len))
         end
         str_tree:add(buf(new_offset, str_len), string.format("Value: \"%s\"", str_data))
     end
-    
+
     return str_data, new_offset + str_len
 end
 
@@ -601,67 +598,67 @@ local function parseField(buf, offset, isbe, tree, depth)
     if not buf or offset >= buf:len() or depth > 10 then
         return offset
     end
-    
+
     local field_type = buf(offset, 1):uint()
     local type_name = PVD_TYPES[field_type] or string.format("unknown(0x%02X)", field_type)
     offset = offset + 1
-    
+
     local field_tree = tree:add(buf(offset - 1, 1), string.format("Field Type: %s (0x%02X)", type_name, field_type))
-    
+
     if field_type == 0x7F then -- structure
         local field_count, new_offset = readPVASize(buf, offset, isbe)
         field_tree:append_text(string.format(" - %d fields", field_count))
         offset = new_offset
-        
+
         -- Parse field names and types
         for i = 1, math.min(field_count, 20) do -- Limit to prevent runaway
             if offset >= buf:len() then break end
-            
+
             -- Read field name
             local field_name, name_offset = readPVAString(buf, offset, isbe, field_tree, string.format("Field %d Name", i))
             offset = name_offset
-            
+
             -- Recursively parse field type
             offset = parseField(buf, offset, isbe, field_tree, depth + 1)
         end
-        
+
     elseif field_type == 0x80 then -- union
         -- Read union name first
         local union_name, name_offset = readPVAString(buf, offset, isbe, field_tree, "Union Name")
         offset = name_offset
-        
+
         if union_name ~= "" then
             field_tree:append_text(string.format(" \"%s\"", union_name))
         end
-        
+
         -- Parse union fields
         local field_count, new_offset = readPVASize(buf, offset, isbe)
         field_tree:append_text(string.format(" - %d choices", field_count))
         offset = new_offset
-        
+
         -- Parse choice names and types
         for i = 1, math.min(field_count, 20) do
             if offset >= buf:len() then break end
-            
+
             local choice_name, name_offset = readPVAString(buf, offset, isbe, field_tree, string.format("Choice %d Name", i))
             offset = name_offset
-            
+
             offset = parseField(buf, offset, isbe, field_tree, depth + 1)
         end
-        
+
     elseif field_type == 0x60 then -- string
         field_tree:append_text(" (string type)")
-        
+
     elseif field_type >= 0x20 and field_type <= 0x2B then -- numeric types
         field_tree:append_text(string.format(" (%s type)", type_name))
-        
+
     elseif field_type >= 0x40 and field_type <= 0x4B then -- array types
         field_tree:append_text(string.format(" (%s type)", type_name))
-        
+
     else
         field_tree:append_text(string.format(" (type 0x%02X)", field_type))
     end
-    
+
     return offset
 end
 
@@ -680,14 +677,14 @@ local function decodeAlarmStatus(severity, status)
     local severity_names = {
         [0] = "NO_ALARM",
         [1] = "MINOR",
-        [2] = "MAJOR", 
+        [2] = "MAJOR",
         [3] = "INVALID"
     }
-    
+
     local status_names = {
         [0] = "NO_ALARM",
         [1] = "READ",
-        [2] = "WRITE", 
+        [2] = "WRITE",
         [3] = "HIHI",
         [4] = "HIGH",
         [5] = "LOLO",
@@ -708,10 +705,10 @@ local function decodeAlarmStatus(severity, status)
         [20] = "READ_ACCESS",
         [21] = "WRITE_ACCESS"
     }
-    
+
     local sev_name = severity_names[severity] or string.format("UNKNOWN(%d)", severity)
     local stat_name = status_names[status] or string.format("UNKNOWN(%d)", status)
-    
+
     return sev_name, stat_name
 end
 
@@ -720,42 +717,42 @@ local function parseValue(buf, offset, field_type, isbe, tree, field_name)
     if not buf or offset >= buf:len() then
         return offset
     end
-    
+
     local type_name = PVD_TYPES[field_type] or "unknown"
-    
+
     if field_type == 0x08 then -- boolean
         if offset < buf:len() then
             local value = buf(offset, 1):uint()
             tree:add(buf(offset, 1), string.format("%s: %s (boolean)", field_name, value == 0 and "false" or "true"))
             return offset + 1
         end
-        
+
     elseif field_type == 0x20 then -- byte
         if offset < buf:len() then
             local value = buf(offset, 1):int()
             tree:add(buf(offset, 1), string.format("%s: %d (0x%02X) (byte)", field_name, value, value))
             return offset + 1
         end
-        
+
     elseif field_type == 0x21 then -- short
         if offset + 1 < buf:len() then
             local value = isbe and buf(offset, 2):int() or buf(offset, 2):le_int()
             tree:add(buf(offset, 2), string.format("%s: %d (short)", field_name, value))
             return offset + 2
         end
-        
+
     elseif field_type == 0x22 then -- int
         if offset + 3 < buf:len() then
             local value = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
             tree:add(buf(offset, 4), string.format("%s: %d (int)", field_name, value))
             return offset + 4
         end
-        
+
     elseif field_type == 0x23 then -- long (enhanced timestamp support)
         if offset + 7 < buf:len() then
             local value = isbe and buf(offset, 8):int64() or buf(offset, 8):le_int64()
             local value_num = tonumber(tostring(value))
-            
+
             -- Special formatting for timestamp fields
             if field_name:match("time") or field_name:match("Time") or field_name:match("seconds") then
                 local formatted_time = formatEpicsTimestamp(value_num, 0)
@@ -765,55 +762,55 @@ local function parseValue(buf, offset, field_type, isbe, tree, field_name)
             end
             return offset + 8
         end
-        
+
     elseif field_type == 0x2A then -- float
         if offset + 3 < buf:len() then
             local value = isbe and buf(offset, 4):float() or buf(offset, 4):le_float()
             tree:add(buf(offset, 4), string.format("%s: %.6g (float)", field_name, value))
             return offset + 4
         end
-        
+
     elseif field_type == 0x2B then -- double
         if offset + 7 < buf:len() then
             local value = isbe and buf(offset, 8):float() or buf(offset, 8):le_float()
             tree:add(buf(offset, 8), string.format("%s: %.6g (double)", field_name, value))
             return offset + 8
         end
-        
+
     elseif field_type == 0x60 then -- string (enhanced)
         local str_len, new_offset = readPVASize(buf, offset, isbe)
         if new_offset + str_len <= buf:len() then
             local str_value = str_len > 0 and buf(new_offset, str_len):string() or ""
-            
+
             -- Special handling for common EPICS fields
             if field_name == "message" and str_value == "" then
                 str_value = "<no alarm>"
             end
-            
+
             tree:add(buf(offset, new_offset - offset + str_len), string.format("%s: \"%s\" (string, %d chars)", field_name, str_value, str_len))
             return new_offset + str_len
         end
-        
+
     -- Phase 4: Array type support
     elseif field_type >= 0x28 and field_type <= 0x2F then -- Array types
         local element_type = field_type - 0x08 -- Convert to element type
         local array_len, len_offset = readPVASize(buf, offset, isbe)
-        
+
         if len_offset < buf:len() then
             local array_tree = tree:add(buf(offset), string.format("%s: [%d elements] (array)", field_name, array_len))
             offset = len_offset
-            
+
             -- Parse first few elements
             for i = 1, math.min(array_len, 10) do -- Limit display to 10 elements
                 if offset >= buf:len() then break end
                 offset = parseValue(buf, offset, element_type, isbe, array_tree, string.format("[%d]", i-1))
             end
-            
+
             if array_len > 10 then
                 array_tree:add(buf(0, 0), string.format("... (%d more elements)", array_len - 10))
             end
         end
-        
+
     else
         -- For unknown types, show raw bytes with better formatting
         local remaining = math.min(16, buf:len() - offset) -- Show max 16 bytes
@@ -826,7 +823,7 @@ local function parseValue(buf, offset, field_type, isbe, tree, field_name)
             return offset + remaining
         end
     end
-    
+
     return offset
 end
 
@@ -835,19 +832,19 @@ local function parseUnionValue(buf, offset, union_fields, isbe, tree, union_name
     if not buf or offset >= buf:len() or #union_fields == 0 then
         return offset
     end
-    
+
     -- Read union discriminator (which choice is active)
     local discriminator, disc_offset = readPVASize(buf, offset, isbe)
-    
+
     if discriminator >= #union_fields then
         tree:add(buf(offset, disc_offset - offset), string.format("Invalid discriminator: %d (max %d)", discriminator, #union_fields - 1))
         return disc_offset
     end
-    
+
     local active_field = union_fields[discriminator + 1]
     local disc_tree = tree:add(buf(offset, disc_offset - offset), string.format("Active Choice: %d (%s)", discriminator, active_field.name))
     offset = disc_offset
-    
+
     -- Special handling for common EPICS union types
     if union_name == "alarm_t" then
         -- Parse alarm union with enhanced status decoding
@@ -862,7 +859,7 @@ local function parseUnionValue(buf, offset, union_fields, isbe, tree, union_name
             tree:add(buf(offset, 4), string.format("status: %d (%s)", status, stat_name))
             return offset + 4
         end
-        
+
     elseif union_name == "time_t" then
         -- Parse timestamp union with enhanced formatting
         if active_field.name == "secondsPastEpoch" and offset + 7 < buf:len() then
@@ -877,19 +874,19 @@ local function parseUnionValue(buf, offset, union_fields, isbe, tree, union_name
             return offset + 4
         end
     end
-    
+
     -- Default parsing for other union types
     if active_field then
         offset = parseValue(buf, offset, active_field.type, isbe, tree, active_field.name)
     end
-    
+
     return offset
 end
 
 -- Phase 4: Enhanced NT type detection and formatting
 local function detectNTType(nt_name)
     if not nt_name then return "Unknown", {} end
-    
+
     local nt_types = {
         ["epics:nt/NTScalar:1.0"] = {
             name = "NTScalar",
@@ -897,13 +894,13 @@ local function detectNTType(nt_name)
             fields = {"value", "alarm", "timeStamp"}
         },
         ["epics:nt/NTTable:1.0"] = {
-            name = "NTTable", 
+            name = "NTTable",
             description = "Table of columns with labels",
             fields = {"labels", "value", "alarm", "timeStamp"}
         },
         ["epics:nt/NTImage:1.0"] = {
             name = "NTImage",
-            description = "2D image data with attributes", 
+            description = "2D image data with attributes",
             fields = {"value", "dimension", "attribute", "alarm", "timeStamp"}
         },
         ["epics:nt/NTEnum:1.0"] = {
@@ -917,7 +914,7 @@ local function detectNTType(nt_name)
             fields = {"value", "dimension", "alarm", "timeStamp"}
         }
     }
-    
+
     local nt_info = nt_types[nt_name]
     if nt_info then
         return nt_info.name, nt_info
@@ -940,23 +937,23 @@ local function parseFieldInfo(buf, offset, isbe, depth)
     if not buf or offset >= buf:len() or depth > 10 then
         return offset, nil
     end
-    
+
     local field_type = buf(offset, 1):uint()
     offset = offset + 1
-    
+
     local field_info = FieldInfo:new("", field_type)
-    
+
     if field_type == 0x7F then -- structure
         local field_count, new_offset = readPVASize(buf, offset, isbe)
         offset = new_offset
-        
+
         -- Parse nested fields
         for i = 1, math.min(field_count, 20) do
             if offset >= buf:len() then break end
-            
+
             local field_name, name_offset = readPVAString(buf, offset, isbe, nil, nil)
             offset = name_offset
-            
+
             local nested_offset, nested_field = parseFieldInfo(buf, offset, isbe, depth + 1)
             if nested_field then
                 nested_field.name = field_name
@@ -964,22 +961,22 @@ local function parseFieldInfo(buf, offset, isbe, depth)
             end
             offset = nested_offset
         end
-        
+
     elseif field_type == 0x80 then -- union
         -- Skip union name
         local union_name, name_offset = readPVAString(buf, offset, isbe, nil, nil)
         offset = name_offset
-        
+
         local field_count, new_offset = readPVASize(buf, offset, isbe)
         offset = new_offset
-        
+
         -- Parse union choices
         for i = 1, math.min(field_count, 20) do
             if offset >= buf:len() then break end
-            
+
             local choice_name, name_offset = readPVAString(buf, offset, isbe, nil, nil)
             offset = name_offset
-            
+
             local choice_offset, choice_field = parseFieldInfo(buf, offset, isbe, depth + 1)
             if choice_field then
                 choice_field.name = choice_name
@@ -988,256 +985,34 @@ local function parseFieldInfo(buf, offset, isbe, depth)
             offset = choice_offset
         end
     end
-    
+
     return offset, field_info
 end
 
--- PVData decoder function - Phase 3: Complete structure + value parsing  
-local function decodePVData(buf, pkt, t, isbe, label)
-    if not buf or buf:len() == 0 then
-        return
+
+
+-- Helper function to get type size (simplified version)
+local function getTypeSize(type_byte)
+    if type_byte == 0x08 then return 1 -- boolean
+    elseif type_byte == 0x20 then return 1 -- byte
+    elseif type_byte == 0x21 then return 2 -- short
+    elseif type_byte == 0x22 then return 4 -- int
+    elseif type_byte == 0x23 then return 8 -- long
+    elseif type_byte == 0x24 then return 1 -- ubyte
+    elseif type_byte == 0x25 then return 2 -- ushort
+    elseif type_byte == 0x26 then return 4 -- uint
+    elseif type_byte == 0x27 then return 8 -- ulong
+    elseif type_byte == 0x2A then return 4 -- float
+    elseif type_byte == 0x2B then return 8 -- double
+    else return 0 -- variable length or unknown
     end
-    
-    -- Create main PVData tree
-    local pvd_tree = t:add(buf, label or "PVData Body")
-    
-    if buf:len() == 0 then
-        pvd_tree:append_text(" [Empty]")
-        return pvd_tree
-    end
-    
-    -- Parse first byte (type)
-    local first_byte = buf(0, 1):uint()
-    local type_name = PVD_TYPES[first_byte] or "unknown"
-    pvd_tree:append_text(string.format(" [Type: %s (0x%02X)]", type_name, first_byte))
-    
-    local offset = 1
-    local introspection_tree = pvd_tree:add(buf(0, 1), "Introspection Data")
-    local main_field_info = nil
-    
-    if first_byte == 0x80 then -- union
-        -- Parse union name
-        local union_name, name_offset = readPVAString(buf, offset, isbe, introspection_tree, "Union Name")
-        offset = name_offset
-        
-        if union_name ~= "" then
-            -- Phase 4: Enhanced NT type detection
-            local nt_type, nt_info = detectNTType(union_name)
-            pvd_tree:append_text(string.format(" \"%s\"", union_name))
-            
-            if nt_type ~= "Unknown" then
-                introspection_tree:add(buf(0, 0), string.format("NT Type: %s - %s", nt_type, nt_info.description))
-            end
-        end
-        
-        -- Parse field count and fields (introspection)
-        if offset < buf:len() then
-            local field_count, count_offset = readPVASize(buf, offset, isbe)
-            pvd_tree:append_text(string.format(" (%d fields)", field_count))
-            
-            introspection_tree:add(buf(offset, count_offset - offset), string.format("Field Count: %d", field_count))
-            offset = count_offset
-            
-            -- Store field information
-            main_field_info = FieldInfo:new(union_name, 0x80)
-            
-            -- Parse fields (introspection) with enhanced display
-            for i = 1, math.min(field_count, 15) do
-                if offset >= buf:len() then break end
-                
-                local field_name, name_offset = readPVAString(buf, offset, isbe, introspection_tree, string.format("Field %d Name", i))
-                offset = name_offset
-                
-                local field_offset, field_info = parseFieldInfo(buf, offset, isbe, 1)
-                if field_info then
-                    field_info.name = field_name
-                    table.insert(main_field_info.fields, field_info)
-                end
-                offset = parseField(buf, offset, isbe, introspection_tree, 1)
-            end
-        end
-        
-    elseif first_byte == 0x7F then -- structure
-        -- Parse field count and fields (introspection)
-        if offset < buf:len() then
-            local field_count, count_offset = readPVASize(buf, offset, isbe)
-            pvd_tree:append_text(string.format(" (%d fields)", field_count))
-            
-            introspection_tree:add(buf(offset, count_offset - offset), string.format("Field Count: %d", field_count))
-            offset = count_offset
-            
-            -- Store field information
-            main_field_info = FieldInfo:new("", 0x7F)
-            
-            -- Parse fields (introspection)
-            for i = 1, math.min(field_count, 15) do
-                if offset >= buf:len() then break end
-                
-                local field_name, name_offset = readPVAString(buf, offset, isbe, introspection_tree, string.format("Field %d Name", i))
-                offset = name_offset
-                
-                local field_offset, field_info = parseFieldInfo(buf, offset, isbe, 1)
-                if field_info then
-                    field_info.name = field_name
-                    table.insert(main_field_info.fields, field_info)
-                end
-                offset = parseField(buf, offset, isbe, introspection_tree, 1)
-            end
-        end
-        
-    elseif first_byte == 0x60 then -- string
-        -- Parse string content
-        if offset < buf:len() then
-            local str_value, str_offset = readPVAString(buf, offset, isbe, pvd_tree, "String Value")
-            offset = str_offset
-        end
-        
-    elseif first_byte == 0x01 then -- introspectionOnly - values only
-        -- This frame contains only values using previously negotiated schema
-        pvd_tree:append_text(" (values only - no schema)")
-        
-        -- For introspectionOnly, the entire remaining buffer is value data
-        if buf:len() > offset then
-            local values_tree = pvd_tree:add(buf(offset), string.format("Values Only (%d bytes)", buf:len() - offset))
-            
-            -- Debug: Show raw bytes first
-            local raw_bytes = ""
-            for i = 0, math.min(7, buf:len() - offset - 1) do
-                raw_bytes = raw_bytes .. string.format("%02X ", buf(offset + i, 1):uint())
-            end
-            values_tree:add(buf(offset, math.min(8, buf:len() - offset)), "Raw bytes: " .. raw_bytes)
-            
-            -- Parse as union values (assuming this is NTScalar response)
-            -- Read discriminator to see which field is active  
-            if offset < buf:len() then
-                local discriminator, disc_offset = readPVASize(buf, offset, isbe)
-                local disc_tree = values_tree:add(buf(offset, disc_offset - offset), string.format("Union Choice: %d", discriminator))
-                offset = disc_offset
-                
-                -- Phase 4: Enhanced value parsing based on discriminator
-                if discriminator == 0 and offset + 3 < buf:len() then
-                    -- Choice 0 = "value" field (int type) 
-                    disc_tree:append_text(" (value)")
-                    local int_val = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
-                    values_tree:add(buf(offset, 4), string.format("value: %d (int) [Primary Data]", int_val))
-                    offset = offset + 4
-                    
-                elseif discriminator == 1 then
-                    -- Choice 1 = "alarm" union - enhanced alarm parsing
-                    disc_tree:append_text(" (alarm)")
-                    
-                    if offset < buf:len() then
-                        -- Parse alarm discriminator
-                        local alarm_disc, alarm_disc_offset = readPVASize(buf, offset, isbe)
-                        local alarm_tree = values_tree:add(buf(offset, alarm_disc_offset - offset), string.format("Alarm Choice: %d", alarm_disc))
-                        offset = alarm_disc_offset
-                        
-                        if alarm_disc == 0 and offset + 3 < buf:len() then
-                            -- severity
-                            local severity = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
-                            local sev_name, _ = decodeAlarmStatus(severity, 0)
-                            values_tree:add(buf(offset, 4), string.format("severity: %d (%s)", severity, sev_name))
-                            offset = offset + 4
-                        elseif alarm_disc == 1 and offset + 3 < buf:len() then
-                            -- status
-                            local status = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
-                            local _, stat_name = decodeAlarmStatus(0, status)
-                            values_tree:add(buf(offset, 4), string.format("status: %d (%s)", status, stat_name))
-                            offset = offset + 4
-                        elseif alarm_disc == 2 then
-                            -- message string
-                            local str_len, str_offset = readPVASize(buf, offset, isbe)
-                            if str_offset + str_len <= buf:len() then
-                                local str_val = str_len > 0 and buf(str_offset, str_len):string() or "<no alarm>"
-                                values_tree:add(buf(offset, str_offset - offset + str_len), string.format("message: \"%s\"", str_val))
-                                offset = str_offset + str_len
-                            end
-                        end
-                    end
-                    
-                elseif discriminator == 2 and offset + 3 < buf:len() then  
-                    -- Choice 2 = "timeStamp" field - enhanced timestamp parsing
-                    disc_tree:append_text(" (timeStamp)")
-                    
-                    -- For introspectionOnly, timestamp is usually a simple int value
-                    local timestamp_val = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
-                    
-                    -- Enhanced timestamp display with multiple formats
-                    if timestamp_val < 1000000000 then
-                        -- Small value - likely a simple counter or userTag
-                        values_tree:add(buf(offset, 4), string.format("timeStamp: %d [Counter/Tag]", timestamp_val))
-                    else
-                        -- Large value - likely seconds since epoch
-                        local formatted_time = formatEpicsTimestamp(timestamp_val, 0)
-                        values_tree:add(buf(offset, 4), string.format("timeStamp: %d (%s)", timestamp_val, formatted_time))
-                    end
-                    offset = offset + 4
-                    
-                else
-                    disc_tree:append_text(" (unknown)")
-                    if offset < buf:len() then
-                        values_tree:add(buf(offset), string.format("Unknown field data (discriminator %d)", discriminator))
-                    end
-                end
-                
-                -- Note: For introspectionOnly frames, typically only one field is active at a time
-            end
-        end
-        
-    else
-        -- Show remaining data for other types
-        if buf:len() > offset then
-            local remaining = buf(offset):tvb()
-            if remaining:len() > 0 then
-                pvd_tree:add(remaining, string.format("Data (%d bytes)", remaining:len()))
-            end
-        end
-    end
-    
-    -- Phase 3: Parse actual values if there's remaining data
-    local remaining_bytes = buf:len() - offset
-    
-    if remaining_bytes > 0 then
-        local values_tree = pvd_tree:add(buf(offset), string.format("Value Data (%d bytes remaining)", remaining_bytes))
-        
-        if main_field_info and main_field_info.type == 0x80 then -- union values
-            offset = parseUnionValue(buf, offset, main_field_info.fields, isbe, values_tree, main_field_info.name)
-            
-        elseif main_field_info and main_field_info.type == 0x7F then -- structure values
-            -- Parse structure field values in order
-            for i, field_info in ipairs(main_field_info.fields) do
-                if offset >= buf:len() then break end
-                
-                if field_info.type == 0x80 then -- nested union
-                    local union_tree = values_tree:add(buf(offset, 1), string.format("Union: %s", field_info.name))
-                    offset = parseUnionValue(buf, offset, field_info.fields, isbe, union_tree, field_info.name)
-                else
-                    offset = parseValue(buf, offset, field_info.type, isbe, values_tree, field_info.name)
-                end
-            end
-        else
-            -- No field info, just show raw data
-            values_tree:add(buf(offset), string.format("Raw value data (%d bytes)", remaining_bytes))
-        end
-        
-        -- Show any remaining unparsed data
-        if offset < buf:len() then
-            local remaining = buf(offset):tvb()
-            values_tree:add(remaining, string.format("Unparsed data (%d bytes)", remaining:len()))
-        end
-    else
-        -- No value data - this might be introspection-only
-        pvd_tree:add(buf(0, 0), "No Value Data (introspection only)")
-    end
-    
-    return pvd_tree
 end
 
 -- Helper function to identify authentication method strings
 -- Context-aware: "anonymous" is usually a username, not a method
 local function isAuthMethod(str, position, prev_was_method)
     local s = str:string():lower()
-    
+
     -- Strong method indicators
     local strong_methods = {"x509", "ca", "plain", "kerberos", "tls", "ssl", "digest", "basic"}
     for _, method in ipairs(strong_methods) do
@@ -1245,13 +1020,13 @@ local function isAuthMethod(str, position, prev_was_method)
             return true
         end
     end
-    
+
     -- "anonymous" is typically a username unless it's clearly in method position
     if s == "anonymous" then
         -- Treat as method only if we've already seen a method (meaning this starts a new entry)
         return prev_was_method
     end
-    
+
     return false
 end
 
@@ -1447,11 +1222,11 @@ local function pva_client_validate (buf, pkt, t, isbe, cmd)
     t:add(fvalid_qos, buf(6,2), qos)
 
     method, buf = decodeString(buf(8), isbe)
-    
+
     -- Declare variables for authz processing
     local authzsize = 0
     local has_authz_extensions = false
-    
+
     -- extensions to the AUTHZ message
     if (buf:len() > 1)
     then
@@ -1468,7 +1243,7 @@ local function pva_client_validate (buf, pkt, t, isbe, cmd)
 	buf = buf(3)
 	has_authz_extensions = true
     end
-    
+
     -- Add appropriate info message based on method
     if method:string():lower() == "x509" then
         pkt.cols.info:append("X509 AUTHZ, ")
@@ -1479,8 +1254,8 @@ local function pva_client_validate (buf, pkt, t, isbe, cmd)
             pkt.cols.info:append("PVA AUTHZ, ")
         end
     end
-    
-    -- Start with basic auth entry for the method  
+
+    -- Start with basic auth entry for the method
     local entry_tree = t:add("AuthZ Entry 1")
     entry_tree:add(fvalid_method, method)
 
@@ -1496,11 +1271,11 @@ local function pva_client_validate (buf, pkt, t, isbe, cmd)
 
 	    account, buf = decodeString(buf, isbe)
 	    peer, buf = decodeString(buf, isbe)
-	    
+
 	    -- Add additional fields to the existing auth entry
 	    entry_tree:add(fvalid_user, account)
 	    entry_tree:add(fvalid_host, peer)
-	    
+
 	elseif authzsize == 3
 	then
 	    buf = skipPVStructureLabelString(buf, isbe)
@@ -1510,7 +1285,7 @@ local function pva_client_validate (buf, pkt, t, isbe, cmd)
 	    peer, buf = decodeString(buf, isbe)
 	    authority, buf = decodeString(buf, isbe)
 	    account, buf = decodeString(buf, isbe)
-	    
+
 	    -- Add additional fields to the existing auth entry
 	    entry_tree:add(fvalid_host, peer)
 	    -- Only show AuthZ authority field when method is not 'ca'
@@ -1525,7 +1300,7 @@ end
 
 local function pva_server_validate (buf, pkt, t, isbe, cmd)
     pkt.cols.info:append("CONNECTION_VALIDATION, ")
-    
+
     if buf:len() >= 7 then
         -- Parse header: 4 bytes buffer size, 2 bytes introspection size, 1 byte flags
         local bsize, isize, flags
@@ -1538,16 +1313,16 @@ local function pva_server_validate (buf, pkt, t, isbe, cmd)
             isize = buf(4,2):le_uint()
         end
         flags = buf(6,1):uint()
-        
+
         t:add(fvalid_bsize, buf(0,4), bsize)
         t:add(fvalid_isize, buf(4,2), isize)
         t:add(fvalid_azflg, buf(6,1), flags)
-        
+
         -- Parse all strings into a table first
         if buf:len() > 7 then
             local remaining = buf(7):tvb()
             local strings = {}
-            
+
             -- Collect all strings
             while remaining and remaining:len() > 0 do
                 local str
@@ -1558,13 +1333,13 @@ local function pva_server_validate (buf, pkt, t, isbe, cmd)
                     break
                 end
             end
-            
+
             -- Process strings into auth entries
             if #strings > 0 then
                 local auth_entries = {}
                 local current_entry = {}
                 local has_seen_method = false
-                
+
                 for i, str in ipairs(strings) do
                     if isAuthMethod(str, i, has_seen_method) then
                         -- This is a method string
@@ -1587,16 +1362,16 @@ local function pva_server_validate (buf, pkt, t, isbe, cmd)
                         end
                     end
                 end
-                
+
                 -- Add the last entry
                 if current_entry.method or current_entry.name or current_entry.response then
                     table.insert(auth_entries, current_entry)
                 end
-                
+
                 -- Create subtrees for each auth entry
                 for i, entry in ipairs(auth_entries) do
                     local entry_tree = t:add("AuthZ Entry " .. i)
-                    
+
                     if entry.name then
                         entry_tree:add(fvalid_user, entry.name)
                     end
@@ -1608,7 +1383,7 @@ local function pva_server_validate (buf, pkt, t, isbe, cmd)
                     end
                 end
             end
-            
+
             -- Handle any remaining unprocessed data
             if remaining and remaining:len() > 0 then
                 t:add(fbody, remaining)
@@ -1780,5 +1555,254 @@ specials_client = {
     [20] = pva_client_op,
     [21] = pva_client_op_destroy,
 }
+
+-- PVData decoder function - Phase 3: Complete structure + value parsing
+function decodePVData(buf, pkt, t, isbe, label)
+    if not buf or buf:len() == 0 then
+        return
+    end
+
+    -- Create main PVData tree (note: using buf only since fpvd ProtoField isn't in scope)
+    local pvd_tree = t:add(buf, label or "PVData Body")
+
+    if buf:len() == 0 then
+        pvd_tree:append_text(" [Empty]")
+        return pvd_tree
+    end
+
+    -- Parse first byte (type)
+    local first_byte = buf(0, 1):uint()
+    local type_name = PVD_TYPES[first_byte] or "unknown"
+    pvd_tree:append_text(string.format(" [Type: %s (0x%02X)]", type_name, first_byte))
+
+    local offset = 1
+    local introspection_tree = pvd_tree:add(buf(0, 1), "Introspection Data")
+    local main_field_info = nil
+
+    if first_byte == 0x80 then -- union
+        -- Parse union name
+        local union_name, name_offset = readPVAString(buf, offset, isbe, introspection_tree, "Union Name")
+        offset = name_offset
+
+        if union_name ~= "" then
+            -- Phase 4: Enhanced NT type detection
+            local nt_type, nt_info = detectNTType(union_name)
+            pvd_tree:append_text(string.format(" \"%s\"", union_name))
+
+            if nt_type ~= "Unknown" then
+                introspection_tree:add(buf(0, 0), string.format("NT Type: %s - %s", nt_type, nt_info.description))
+            end
+        end
+
+        -- Parse field count and fields (introspection)
+        if offset < buf:len() then
+            local field_count, count_offset = readPVASize(buf, offset, isbe)
+            pvd_tree:append_text(string.format(" (%d fields)", field_count))
+
+            introspection_tree:add(buf(offset, count_offset - offset), string.format("Field Count: %d", field_count))
+            offset = count_offset
+
+            -- Store field information
+            main_field_info = FieldInfo:new(union_name, 0x80)
+
+            -- Parse fields (introspection) with enhanced display
+            for i = 1, math.min(field_count, 15) do
+                if offset >= buf:len() then break end
+
+                local field_name, name_offset = readPVAString(buf, offset, isbe, introspection_tree, string.format("Field %d Name", i))
+                offset = name_offset
+
+                local field_offset, field_info = parseFieldInfo(buf, offset, isbe, 1)
+                if field_info then
+                    field_info.name = field_name
+                    table.insert(main_field_info.fields, field_info)
+                end
+                offset = parseField(buf, offset, isbe, introspection_tree, 1)
+            end
+        end
+
+    elseif first_byte == 0x7F then -- structure
+        -- Parse field count and fields (introspection)
+        if offset < buf:len() then
+            local field_count, count_offset = readPVASize(buf, offset, isbe)
+            pvd_tree:append_text(string.format(" (%d fields)", field_count))
+
+            introspection_tree:add(buf(offset, count_offset - offset), string.format("Field Count: %d", field_count))
+            offset = count_offset
+
+            -- Store field information
+            main_field_info = FieldInfo:new("", 0x7F)
+
+            -- Parse fields (introspection)
+            for i = 1, math.min(field_count, 15) do
+                if offset >= buf:len() then break end
+
+                local field_name, name_offset = readPVAString(buf, offset, isbe, introspection_tree, string.format("Field %d Name", i))
+                offset = name_offset
+
+                local field_offset, field_info = parseFieldInfo(buf, offset, isbe, 1)
+                if field_info then
+                    field_info.name = field_name
+                    table.insert(main_field_info.fields, field_info)
+                end
+                offset = parseField(buf, offset, isbe, introspection_tree, 1)
+            end
+        end
+
+    elseif first_byte == 0x60 then -- string
+        -- Parse string content
+        if offset < buf:len() then
+            local str_value, str_offset = readPVAString(buf, offset, isbe, pvd_tree, "String Value")
+            offset = str_offset
+        end
+
+    elseif first_byte == 0x01 then -- introspectionOnly - values only
+        -- This frame contains only values using previously negotiated schema
+        pvd_tree:append_text(" (values only - no schema)")
+
+        -- For introspectionOnly, the entire remaining buffer is value data
+        if buf:len() > offset then
+            local values_tree = pvd_tree:add(buf(offset), string.format("Values Only (%d bytes)", buf:len() - offset))
+
+            -- Debug: Show raw bytes first
+            local raw_bytes = ""
+            for i = 0, math.min(7, buf:len() - offset - 1) do
+                raw_bytes = raw_bytes .. string.format("%02X ", buf(offset + i, 1):uint())
+            end
+            values_tree:add(buf(offset, math.min(8, buf:len() - offset)), "Raw bytes: " .. raw_bytes)
+
+            -- Parse as union values (assuming this is NTScalar response)
+            -- Read discriminator to see which field is active
+            if offset < buf:len() then
+                local discriminator, disc_offset = readPVASize(buf, offset, isbe)
+                local disc_tree = values_tree:add(buf(offset, disc_offset - offset), string.format("Union Choice: %d", discriminator))
+                offset = disc_offset
+
+                -- Phase 4: Enhanced value parsing based on discriminator
+                if discriminator == 0 and offset + 3 < buf:len() then
+                    -- Choice 0 = "value" field (int type)
+                    disc_tree:append_text(" (value)")
+                    local int_val = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
+                    values_tree:add(buf(offset, 4), string.format("value: %d (int) [Primary Data]", int_val))
+                    offset = offset + 4
+
+                elseif discriminator == 1 then
+                    -- Choice 1 = "alarm" union - enhanced alarm parsing
+                    disc_tree:append_text(" (alarm)")
+
+                    if offset < buf:len() then
+                        -- Parse alarm discriminator
+                        local alarm_disc, alarm_disc_offset = readPVASize(buf, offset, isbe)
+                        local alarm_tree = values_tree:add(buf(offset, alarm_disc_offset - offset), string.format("Alarm Choice: %d", alarm_disc))
+                        offset = alarm_disc_offset
+
+                        if alarm_disc == 0 and offset + 3 < buf:len() then
+                            -- severity
+                            local severity = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
+                            local sev_name, _ = decodeAlarmStatus(severity, 0)
+                            values_tree:add(buf(offset, 4), string.format("severity: %d (%s)", severity, sev_name))
+                            offset = offset + 4
+                        elseif alarm_disc == 1 and offset + 3 < buf:len() then
+                            -- status
+                            local status = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
+                            local _, stat_name = decodeAlarmStatus(0, status)
+                            values_tree:add(buf(offset, 4), string.format("status: %d (%s)", status, stat_name))
+                            offset = offset + 4
+                        elseif alarm_disc == 2 then
+                            -- message string
+                            local str_len, str_offset = readPVASize(buf, offset, isbe)
+                            if str_offset + str_len <= buf:len() then
+                                local str_val = str_len > 0 and buf(str_offset, str_len):string() or "<no alarm>"
+                                values_tree:add(buf(offset, str_offset - offset + str_len), string.format("message: \"%s\"", str_val))
+                                offset = str_offset + str_len
+                            end
+                        end
+                    end
+
+                elseif discriminator == 2 and offset + 3 < buf:len() then
+                    -- Choice 2 = "timeStamp" field - enhanced timestamp parsing
+                    disc_tree:append_text(" (timeStamp)")
+
+                    -- For introspectionOnly, timestamp is usually a simple int value
+                    local timestamp_val = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
+
+                    -- Enhanced timestamp display with multiple formats
+                    if timestamp_val < 1000000000 then
+                        -- Small value - likely a simple counter or userTag
+                        values_tree:add(buf(offset, 4), string.format("timeStamp: %d [Counter/Tag]", timestamp_val))
+                    else
+                        -- Large value - likely seconds since epoch
+                        local formatted_time = formatEpicsTimestamp(timestamp_val, 0)
+                        values_tree:add(buf(offset, 4), string.format("timeStamp: %d (%s)", timestamp_val, formatted_time))
+                    end
+                    offset = offset + 4
+
+                else
+                    disc_tree:append_text(" (unknown)")
+                    if offset < buf:len() then
+                        values_tree:add(buf(offset), string.format("Unknown field data (discriminator %d)", discriminator))
+                    end
+                end
+
+                -- Note: For introspectionOnly frames, typically only one field is active at a time
+            end
+        end
+
+    else
+        -- Show remaining data for other types
+        if buf:len() > offset then
+            local remaining = buf(offset):tvb()
+            if remaining:len() > 0 then
+                pvd_tree:add(remaining, string.format("Data (%d bytes)", remaining:len()))
+            end
+        end
+    end
+
+    -- Phase 3: Parse actual values if there's remaining data
+    local remaining_bytes = buf:len() - offset
+
+    if remaining_bytes > 0 then
+        local values_tree = pvd_tree:add(buf(offset), string.format("Value Data (%d bytes remaining)", remaining_bytes))
+
+        if main_field_info and main_field_info.type == 0x80 then -- union values
+            offset = parseUnionValue(buf, offset, main_field_info.fields, isbe, values_tree, main_field_info.name)
+
+        elseif main_field_info and main_field_info.type == 0x7F then -- structure values
+            -- Parse structure field values in order
+            for i, field_info in ipairs(main_field_info.fields) do
+                if offset >= buf:len() then break end
+
+                if field_info.type == 0x80 then -- nested union
+                    local union_tree = values_tree:add(buf(offset, 1), string.format("Union: %s", field_info.name))
+                    offset = parseUnionValue(buf, offset, field_info.fields, isbe, union_tree, field_info.name)
+                else
+                    -- Use simple value parsing for now since parseValue might not be defined
+                    local type_size = getTypeSize(field_info.type)
+                    if type_size > 0 and offset + type_size <= buf:len() then
+                        values_tree:add(buf(offset, type_size), string.format("%s: [%d bytes]", field_info.name or "field", type_size))
+                        offset = offset + type_size
+                    else
+                        values_tree:add(buf(offset), string.format("%s: [remaining data]", field_info.name or "field"))
+                        break
+                    end
+                end
+            end
+        else
+            -- No field info, just show raw data
+            values_tree:add(buf(offset), string.format("Raw value data (%d bytes)", remaining_bytes))
+        end
+
+        -- Show any remaining unparsed data
+        if offset < buf:len() then
+            local remaining = buf(offset):tvb()
+            values_tree:add(remaining, string.format("Unparsed data (%d bytes)", remaining:len()))
+        end
+    else
+        -- No value data - this might be introspection-only
+        pvd_tree:add(buf(0, 0), "No Value Data (introspection only)")
+    end
+
+    return pvd_tree
+end
 
 io.stderr:write("Loaded PVA\n")
