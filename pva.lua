@@ -999,7 +999,7 @@ local function decodePVData(buf, pkt, t, isbe, label)
     end
     
     -- Create main PVData tree
-    local pvd_tree = t:add(buf, label or "PVData")
+    local pvd_tree = t:add(buf, label or "PVData Body")
     
     if buf:len() == 0 then
         pvd_tree:append_text(" [Empty]")
