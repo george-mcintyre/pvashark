@@ -548,20 +548,80 @@ local function parsePVField(buf, offset, isbe, tree, depth)
     return offset
 end
 
--- PVData decoder function - Phase 2: Structure parsing  
+-- PVData decoder function - Phase 2: Enhanced structure parsing  
 local function decodePVData(buf, pkt, t, isbe, label)
     if not buf or buf:len() == 0 then
         return
     end
     
-    -- Use basic tree operations without custom fields temporarily
+    -- Create main PVData tree using basic tree operations
     local pvd_tree = t:add(buf, label or "PVData")
     
-    -- Just show basic info
-    if buf:len() > 0 then
-        local first_byte = buf(0, 1):uint()
-        local type_name = PVD_TYPES[first_byte] or "unknown" 
-        pvd_tree:append_text(string.format(" [First byte: 0x%02X = %s]", first_byte, type_name))
+    if buf:len() == 0 then
+        pvd_tree:append_text(" [Empty]")
+        return pvd_tree
+    end
+    
+    -- Parse first byte (type)
+    local first_byte = buf(0, 1):uint()
+    local type_name = PVD_TYPES[first_byte] or "unknown"
+    pvd_tree:append_text(string.format(" [Type: %s (0x%02X)]", type_name, first_byte))
+    
+    -- Add type-specific parsing
+    local offset = 1
+    
+    if first_byte == 0x80 then -- union
+        -- Add union-specific decoding
+        local union_tree = pvd_tree:add(buf(0, 1), "Union Type (0x80)")
+        
+        if buf:len() > offset then
+            -- Show remaining data for union
+            local remaining = buf(offset):tvb()
+            if remaining:len() > 0 then
+                pvd_tree:add(remaining, string.format("Union Data (%d bytes)", remaining:len()))
+            end
+        end
+        
+    elseif first_byte == 0x7F then -- structure  
+        -- Add structure-specific decoding
+        local struct_tree = pvd_tree:add(buf(0, 1), "Structure Type (0x7F)")
+        
+        if buf:len() > offset then
+            local remaining = buf(offset):tvb()
+            if remaining:len() > 0 then
+                pvd_tree:add(remaining, string.format("Structure Data (%d bytes)", remaining:len()))
+            end
+        end
+        
+    elseif first_byte >= 0x20 and first_byte <= 0x2B then -- numeric types
+        local type_tree = pvd_tree:add(buf(0, 1), string.format("%s Type (0x%02X)", type_name, first_byte))
+        
+        if buf:len() > offset then
+            local remaining = buf(offset):tvb()
+            if remaining:len() > 0 then
+                pvd_tree:add(remaining, string.format("%s Value (%d bytes)", type_name, remaining:len()))
+            end
+        end
+        
+    elseif first_byte == 0x60 then -- string
+        local str_tree = pvd_tree:add(buf(0, 1), "String Type (0x60)")
+        
+        -- Try to decode string length and content
+        if buf:len() > offset then
+            local remaining = buf(offset):tvb() 
+            if remaining:len() > 0 then
+                pvd_tree:add(remaining, string.format("String Data (%d bytes)", remaining:len()))
+            end
+        end
+        
+    else
+        -- Generic handling for other types
+        if buf:len() > offset then
+            local remaining = buf(offset):tvb()
+            if remaining:len() > 0 then
+                pvd_tree:add(remaining, string.format("Data (%d bytes)", remaining:len()))
+            end
+        end
     end
     
     return pvd_tree
