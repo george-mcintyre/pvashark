@@ -52,6 +52,8 @@ local stscodes = {
     [3] = "Fatal Error",
 }
 
+local placeholder= ProtoField.bytes("pva.placeholder", " ")
+
 local fmagic= ProtoField.uint8("pva.magic", "Magic", base.HEX)
 local fver  = ProtoField.uint8("pva.version", "Version", base.DEC)
 local fflags= ProtoField.uint8("pva.flags", "Flags", base.HEX)
@@ -1563,7 +1565,7 @@ function decodePVData(buf, pkt, t, isbe, label)
     end
 
     -- Create main PVData tree (note: using buf only since fpvd ProtoField isn't in scope)
-    local pvd_tree = t:add(buf, label or "PVData Body")
+    local pvd_tree = t:add(placeholder, label or "PVData Body")
 
     if buf:len() == 0 then
         pvd_tree:append_text(" [Empty]")
