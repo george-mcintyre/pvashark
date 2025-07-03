@@ -953,6 +953,7 @@ local function decodePVData(buf, pkt, t, isbe, label)
                 -- Parse value based on discriminator
                 if discriminator == 0 and offset + 3 < buf:len() then
                     -- Choice 0 = "value" field (int type)
+                    disc_tree:append_text(" (value)")
                     local int_val = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
                     values_tree:add(buf(offset, 4), string.format("value: %d (int)", int_val))
                     offset = offset + 4
@@ -960,16 +961,54 @@ local function decodePVData(buf, pkt, t, isbe, label)
                     -- Choice 1 = "alarm" union
                     disc_tree:append_text(" (alarm)")
                     -- Parse nested union...
-                elseif discriminator == 2 and offset + 3 < buf:len() then  
-                    -- Choice 2 = "timeStamp" field (simple int value)
+                elseif discriminator == 2 then  
+                    -- Choice 2 = "timeStamp" field - could be int or string
                     disc_tree:append_text(" (timeStamp)")
-                    local timestamp_val = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
-                    values_tree:add(buf(offset, 4), string.format("timeStamp: %d", timestamp_val))
-                    offset = offset + 4
+                    
+                    if offset + 3 < buf:len() then
+                        -- Try parsing as int first
+                        local timestamp_val = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
+                        values_tree:add(buf(offset, 4), string.format("timeStamp: %d", timestamp_val))
+                        offset = offset + 4
+                    end
                 else
                     disc_tree:append_text(" (unknown)")
                     if offset < buf:len() then
                         values_tree:add(buf(offset), "Unknown value data")
+                    end
+                end
+                
+                -- Continue parsing if there's more data (multiple fields can be active)
+                while offset < buf:len() - 1 do
+                    local next_discriminator, next_disc_offset = readPVASize(buf, offset, isbe)
+                    
+                    if next_discriminator < 3 then -- Valid discriminator
+                        local next_disc_tree = values_tree:add(buf(offset, next_disc_offset - offset), string.format("Additional Field %d", next_discriminator))
+                        offset = next_disc_offset
+                        
+                        if next_discriminator == 0 and offset + 3 < buf:len() then
+                            -- "value" field
+                            local int_val = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
+                            values_tree:add(buf(offset, 4), string.format("value: %d (int)", int_val))
+                            offset = offset + 4
+                        elseif next_discriminator == 2 and offset + 3 < buf:len() then
+                            -- "timeStamp" field
+                            local timestamp_val = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
+                            values_tree:add(buf(offset, 4), string.format("timeStamp: %d", timestamp_val))
+                            offset = offset + 4
+                        else
+                            -- Unknown or complex field - try string parsing
+                            local str_len, str_offset = readPVASize(buf, offset, isbe)
+                            if str_offset + str_len <= buf:len() then
+                                local str_val = str_len > 0 and buf(str_offset, str_len):string() or ""
+                                values_tree:add(buf(offset, str_offset - offset + str_len), string.format("Field %d: \"%s\"", next_discriminator, str_val))
+                                offset = str_offset + str_len
+                            else
+                                break -- Can't parse further
+                            end
+                        end
+                    else
+                        break -- Invalid discriminator, stop parsing
                     end
                 end
             end
