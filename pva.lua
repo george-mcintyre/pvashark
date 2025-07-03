@@ -630,7 +630,10 @@ local function pva_client_validate (buf, pkt, t, isbe, cmd)
 	    
 	    -- Add additional fields to the existing auth entry
 	    entry_tree:add(fvalid_host, peer)
-	    entry_tree:add(fvalid_authority, authority)
+	    -- Only show AuthZ authority field when method is not 'ca'
+	    if method:string():lower() ~= "ca" then
+	        entry_tree:add(fvalid_authority, authority)
+	    end
 	    entry_tree:add(fvalid_user, account)
 	    entry_tree:add(fvalid_isTLS, 1)
 	end
