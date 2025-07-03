@@ -106,6 +106,8 @@ local fvalid_isTLS = ProtoField.uint8("pva.isTLS", "AuthZ isTLS")
 
 local fauthz_response = ProtoField.string("pva.authzresponse", "AuthZ response")
 
+-- For AuthZ Entry Array (removed fauth_entry_index as no longer needed)
+
 -- For SEARCH
 local fsearch_seq = ProtoField.uint32("pva.seq", "Search Sequence #")
 local fsearch_addr = ProtoField.bytes("pva.addr", "Address")
@@ -357,6 +359,28 @@ local function skipPVStructureLabelString(buf, isbe)
     end
 end
 
+-- Helper function to identify authentication method strings
+-- Context-aware: "anonymous" is usually a username, not a method
+local function isAuthMethod(str, position, prev_was_method)
+    local s = str:string():lower()
+    
+    -- Strong method indicators
+    local strong_methods = {"x509", "ca", "plain", "kerberos", "tls", "ssl", "digest", "basic"}
+    for _, method in ipairs(strong_methods) do
+        if s == method then
+            return true
+        end
+    end
+    
+    -- "anonymous" is typically a username unless it's clearly in method position
+    if s == "anonymous" then
+        -- Treat as method only if we've already seen a method (meaning this starts a new entry)
+        return prev_was_method
+    end
+    
+    return false
+end
+
 
 -- Since PVA has some identifiable header we can
 -- avoid having to select "Decode as..." every time :)
@@ -549,22 +573,35 @@ local function pva_client_validate (buf, pkt, t, isbe, cmd)
     t:add(fvalid_qos, buf(6,2), qos)
 
     method, buf = decodeString(buf(8), isbe)
-    t:add(fvalid_method, method)
-
+    
+    -- Declare variables for authz processing
+    local authzsize = 0
+    local has_authz_extensions = false
+    
     -- extensions to the AUTHZ message
     if (buf:len() > 1)
     then
-	local authzmessage, authzflags, authzsize
+	local authzmessage, authzflags
 	authzmessage = buf(0,1):uint()
 	if authzmessage == 0xfd
 	then
 	   buf=buf(3)
 	end
+	-- Add authz flags at the main level (applies to all entries)
 	t:add(fvalid_azflg,  buf(1,1))
-	t:add(fvalid_azcnt,  buf(2,1))
 	authzflags = buf(1,1):uint()
     authzsize  = buf(2,1):uint()
 	buf = buf(3)
+	has_authz_extensions = true
+    end
+    
+    -- Start with basic auth entry for the method  
+    local entry_tree = t:add("AuthZ Entry 1")
+    entry_tree:add(fvalid_method, method)
+
+    -- Process authz extensions if present
+    if has_authz_extensions and (buf and buf:len() > 0)
+    then
 
 	local peer, method, authority, account, isTLS
 	if authzsize == 2
@@ -575,8 +612,11 @@ local function pva_client_validate (buf, pkt, t, isbe, cmd)
 
 	    account, buf = decodeString(buf, isbe)
 	    peer, buf = decodeString(buf, isbe)
-	    t:add(fvalid_user, account)
-	    t:add(fvalid_host, peer)
+	    
+	    -- Add additional fields to the existing auth entry
+	    entry_tree:add(fvalid_user, account)
+	    entry_tree:add(fvalid_host, peer)
+	    
 	elseif authzsize == 3
 	then
 	    pkt.cols.info:append("PVA AUTHZ, ")
@@ -587,10 +627,12 @@ local function pva_client_validate (buf, pkt, t, isbe, cmd)
 	    peer, buf = decodeString(buf, isbe)
 	    authority, buf = decodeString(buf, isbe)
 	    account, buf = decodeString(buf, isbe)
-	    t:add(fvalid_host, peer)
-	    t:add(fvalid_authority, authority)
-	    t:add(fvalid_user, account)
-	    t:add(fvalid_isTLS, 1)
+	    
+	    -- Add additional fields to the existing auth entry
+	    entry_tree:add(fvalid_host, peer)
+	    entry_tree:add(fvalid_authority, authority)
+	    entry_tree:add(fvalid_user, account)
+	    entry_tree:add(fvalid_isTLS, 1)
 	end
     end
 end
@@ -598,11 +640,8 @@ end
 local function pva_server_validate (buf, pkt, t, isbe, cmd)
     pkt.cols.info:append("CONNECTION_VALIDATION, ")
     
-    -- Server response format appears to be different from client request
-    -- Based on the hex data, let's try to decode the actual structure
-    
     if buf:len() >= 7 then
-        -- Try parsing as: 4 bytes buffer size, 2 bytes introspection size, 1 byte flags, then strings
+        -- Parse header: 4 bytes buffer size, 2 bytes introspection size, 1 byte flags
         local bsize, isize, flags
         if isbe
         then
@@ -618,34 +657,73 @@ local function pva_server_validate (buf, pkt, t, isbe, cmd)
         t:add(fvalid_isize, buf(4,2), isize)
         t:add(fvalid_azflg, buf(6,1), flags)
         
-        -- Try to decode strings starting at position 7
+        -- Parse all strings into a table first
         if buf:len() > 7 then
             local remaining = buf(7):tvb()
-            local method, response, additional
+            local strings = {}
             
-            -- First string is the user name
-            local username, response, actual_method
-            username, remaining = decodeString(remaining, isbe)
-            if username and username:len() > 0 then
-                t:add(fvalid_user, username)  -- Label as name (anonymous)
-            end
-            
-            if remaining and remaining:len() > 0 then
-                response, remaining = decodeString(remaining, isbe)
-                if response and response:len() > 0 then
-                    t:add(fvalid_method, response)
+            -- Collect all strings
+            while remaining and remaining:len() > 0 do
+                local str
+                str, remaining = decodeString(remaining, isbe)
+                if str and str:len() > 0 then
+                    table.insert(strings, str)
+                else
+                    break
                 end
             end
             
-            -- Third string is the actual method when TLS is used
-            if remaining and remaining:len() > 0 then
-                actual_method, remaining = decodeString(remaining, isbe)
-                if actual_method and actual_method:len() > 0 then
-                    t:add(fvalid_method, actual_method)  -- This is the actual method (x509)
+            -- Process strings into auth entries
+            if #strings > 0 then
+                local auth_entries = {}
+                local current_entry = {}
+                local has_seen_method = false
+                
+                for i, str in ipairs(strings) do
+                    if isAuthMethod(str, i, has_seen_method) then
+                        -- This is a method string
+                        if current_entry.method then
+                            -- Current entry already has a method, start new entry
+                            table.insert(auth_entries, current_entry)
+                            current_entry = {method = str}
+                        else
+                            -- Add method to current entry
+                            current_entry.method = str
+                        end
+                        has_seen_method = true
+                    else
+                        -- This is likely a name/user string
+                        if not current_entry.name then
+                            current_entry.name = str
+                        else
+                            -- Could be additional data like response
+                            current_entry.response = str
+                        end
+                    end
+                end
+                
+                -- Add the last entry
+                if current_entry.method or current_entry.name or current_entry.response then
+                    table.insert(auth_entries, current_entry)
+                end
+                
+                -- Create subtrees for each auth entry
+                for i, entry in ipairs(auth_entries) do
+                    local entry_tree = t:add("AuthZ Entry " .. i)
+                    
+                    if entry.name then
+                        entry_tree:add(fvalid_user, entry.name)
+                    end
+                    if entry.method then
+                        entry_tree:add(fvalid_method, entry.method)
+                    end
+                    if entry.response then
+                        entry_tree:add(fauthz_response, entry.response)
+                    end
                 end
             end
             
-            -- If we still have unprocessed data, show it as raw bytes
+            -- Handle any remaining unprocessed data
             if remaining and remaining:len() > 0 then
                 t:add(fbody, remaining)
             end
