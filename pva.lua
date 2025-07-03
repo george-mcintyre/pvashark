@@ -554,27 +554,14 @@ local function decodePVData(buf, pkt, t, isbe, label)
         return
     end
     
-    -- Create subtree for PVData
-    local pvd_tree = t:add(fpvd_struct, buf, label or "PVData")
+    -- Use basic tree operations without custom fields temporarily
+    local pvd_tree = t:add(buf, label or "PVData")
     
-    -- Safe debug: just show first few bytes without string formatting
-    if buf:len() > 0 then
-        pvd_tree:add(fpvd_debug, buf(0, math.min(4, buf:len())), "First bytes (hex view)")
-    end
-    
-    -- Simple parsing: just show first byte and remaining data
+    -- Just show basic info
     if buf:len() > 0 then
         local first_byte = buf(0, 1):uint()
-        local type_name = PVD_TYPES[first_byte] or "unknown"
-        
-        -- Show first byte without complex string formatting  
-        local first_tree = pvd_tree:add(fpvd_introspection, buf(0, 1), "Type byte")
-        first_tree:append_text(" = " .. type_name)
-        
-        -- Show remaining data
-        if buf:len() > 1 then
-            pvd_tree:add(fpvd_value, buf(1), "Data bytes")
-        end
+        local type_name = PVD_TYPES[first_byte] or "unknown" 
+        pvd_tree:append_text(string.format(" [First byte: 0x%02X = %s]", first_byte, type_name))
     end
     
     return pvd_tree
