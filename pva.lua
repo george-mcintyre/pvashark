@@ -67,6 +67,14 @@ local fbody = ProtoField.bytes("pva.body", "Body")
 local fpvd = ProtoField.bytes("pva.pvd", "PVData Body")
 local fguid = ProtoField.bytes("pva.guid", "GUID")
 
+-- PVData Fields
+local fpvd_struct = ProtoField.bytes("pva.pvd_struct", "PVStructure")
+local fpvd_field = ProtoField.bytes("pva.pvd_field", "Field")
+local fpvd_field_name = ProtoField.string("pva.pvd_field_name", "Field Name")
+local fpvd_type = ProtoField.uint8("pva.pvd_type", "Type", base.HEX)
+local fpvd_value = ProtoField.bytes("pva.pvd_value", "Value")
+local fpvd_introspection = ProtoField.bytes("pva.pvd_introspection", "Introspection Data")
+
 -- common
 local fcid = ProtoField.uint32("pva.cid", "Client Channel ID")
 local fsid = ProtoField.uint32("pva.sid", "Server Channel ID")
@@ -129,6 +137,7 @@ pva.fields = {
     fbeacon_seq, fbeacon_change,
     fvalid_bsize, fvalid_isize, fvalid_qos, fvalid_host, fvalid_method, fvalid_authority, fvalid_account, fvalid_user, fvalid_isTLS,
     fvalid_azflg, fvalid_azcnt, fauthz_request, fauthz_response,
+    fpvd_struct, fpvd_field, fpvd_field_name, fpvd_type, fpvd_value, fpvd_introspection,
     fsearch_seq, fsearch_addr, fsearch_port, fsearch_mask, fsearch_mask_repl, fsearch_mask_bcast,
     fsearch_proto, fsearch_count, fsearch_cid, fsearch_name,
     fsearch_found,
@@ -357,6 +366,32 @@ local function skipPVStructureLabelString(buf, isbe)
     else
         return buf(s+1)
     end
+end
+
+-- PVData decoder function - Phase 1: Foundation
+local function decodePVData(buf, pkt, t, isbe, label)
+    if not buf or buf:len() == 0 then
+        return
+    end
+    
+    -- Create subtree for PVData
+    local pvd_tree = t:add(fpvd_struct, buf, label or "PVData")
+    
+    -- Phase 1: Just show raw data for now, will expand in future phases
+    if buf:len() > 0 then
+        pvd_tree:add(fpvd_introspection, buf(0, math.min(buf:len(), 32)), "Introspection (first 32 bytes)")
+        if buf:len() > 32 then
+            pvd_tree:add(fpvd_value, buf(32), "Data Values")
+        end
+    end
+    
+    -- TODO: Future phases will add:
+    -- - Type parsing and introspection decoding
+    -- - Field name extraction
+    -- - Value decoding by type
+    -- - NT (Normative Type) recognition
+    
+    return pvd_tree
 end
 
 -- Helper function to identify authentication method strings
@@ -825,7 +860,7 @@ local function pva_client_op (buf, pkt, t, isbe, cmd)
     cmd:add(fsubcmd_get, buf(8,1), subcmd)
     cmd:add(fsubcmd_gtpt, buf(8,1), subcmd)
     if buf:len()>9 then
-        t:add(fpvd, buf(9))
+        decodePVData(buf(9), pkt, t, isbe, "PVData Body")
     end
 
     pkt.cols.info:append(string.format("%s(sid=%u, ioid=%u, sub=%02x), ", cname, sid, ioid, subcmd))
@@ -856,7 +891,7 @@ local function pva_server_op (buf, pkt, t, isbe, cmd)
         buf = decodeStatus(buf(0), pkt, t, isbe)
     end
     if buf and buf:len()>0 then
-        t:add(fpvd, buf(0))
+        decodePVData(buf(0), pkt, t, isbe, "PVData Body")
     end
 
     pkt.cols.info:append(string.format("%s(ioid=%u, sub=%02x), ", cname, ioid, subcmd))
