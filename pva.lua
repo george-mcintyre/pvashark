@@ -74,6 +74,7 @@ local fpvd_field_name = ProtoField.string("pva.pvd_field_name", "Field Name")
 local fpvd_type = ProtoField.uint8("pva.pvd_type", "Type", base.HEX)
 local fpvd_value = ProtoField.bytes("pva.pvd_value", "Value")
 local fpvd_introspection = ProtoField.bytes("pva.pvd_introspection", "Introspection Data")
+local fpvd_debug = ProtoField.bytes("pva.pvd_debug", "Debug Info")
 
 -- common
 local fcid = ProtoField.uint32("pva.cid", "Client Channel ID")
@@ -137,7 +138,7 @@ pva.fields = {
     fbeacon_seq, fbeacon_change,
     fvalid_bsize, fvalid_isize, fvalid_qos, fvalid_host, fvalid_method, fvalid_authority, fvalid_account, fvalid_user, fvalid_isTLS,
     fvalid_azflg, fvalid_azcnt, fauthz_request, fauthz_response,
-    fpvd_struct, fpvd_field, fpvd_field_name, fpvd_type, fpvd_value, fpvd_introspection,
+    fpvd_struct, fpvd_field, fpvd_field_name, fpvd_type, fpvd_value, fpvd_introspection, fpvd_debug,
     fsearch_seq, fsearch_addr, fsearch_port, fsearch_mask, fsearch_mask_repl, fsearch_mask_bcast,
     fsearch_proto, fsearch_count, fsearch_cid, fsearch_name,
     fsearch_found,
@@ -433,23 +434,121 @@ local function readPVString(buf, offset, isbe)
     return str, new_offset + str_len
 end
 
--- PVData field parser (Phase 2) - Simplified for debugging
+-- PVData field parser (Phase 2) - Full featured with API fixes
 local function parsePVField(buf, offset, isbe, tree, depth)
     if offset >= buf:len() or depth > 10 then
         return offset
     end
     
-    -- Just show the type byte for now
     local type_byte = buf(offset, 1):uint()
     local type_name = PVD_TYPES[type_byte] or string.format("unknown(0x%02X)", type_byte)
     
-    -- Simple display without complex tree operations
-    tree:append_text(string.format(" [Type: 0x%02X=%s]", type_byte, type_name))
+    -- Create field subtree with proper API
+    local field_tree = tree:add(fpvd_field, buf(offset, 1), string.format("Field [%s] (0x%02X)", type_name, type_byte))
+    offset = offset + 1
     
-    return offset + 1
+    -- Handle different field types
+    if type_byte == 0x01 then -- introspectionOnly
+        field_tree:append_text(" (introspection only - no data)")
+        
+    elseif type_byte == 0x7F then -- structure
+        if offset < buf:len() then
+            local field_count, new_offset = readPVSize(buf, offset, isbe)
+            field_tree:append_text(string.format(" (%d fields)", field_count))
+            offset = new_offset
+            
+            -- Sanity check field count
+            if field_count > 50 then
+                field_tree:append_text(" [Warning: High field count, limiting to 20]")
+                field_count = 20 -- Limit to prevent runaway parsing
+            end
+            
+            -- Parse field names and types
+            for i = 1, field_count do
+                if offset >= buf:len() then 
+                    field_tree:append_text(" [Error: Unexpected end of buffer]")
+                    break 
+                end
+                
+                -- Read field name
+                local field_name, name_offset = readPVString(buf, offset, isbe)
+                if field_name and field_name ~= "" then
+                    local name_len = name_offset - offset
+                    if name_len > 0 and name_len <= buf:len() - offset then
+                        field_tree:add(fpvd_field_name, buf(offset, name_len), field_name)
+                    end
+                end
+                offset = name_offset
+                
+                -- Recursively parse field type
+                offset = parsePVField(buf, offset, isbe, field_tree, depth + 1)
+            end
+        end
+        
+    elseif type_byte == 0x80 then -- union
+        if offset < buf:len() then
+            local union_name, name_offset = readPVString(buf, offset, isbe)
+            if union_name and union_name ~= "" then
+                field_tree:append_text(string.format(" [%s]", union_name))
+                local name_len = name_offset - offset
+                if name_len > 0 and name_len <= buf:len() - offset then
+                    field_tree:add(fpvd_field_name, buf(offset, name_len), union_name)
+                end
+                offset = name_offset
+                
+                -- Parse union fields (similar to structure)
+                if offset < buf:len() then
+                    local field_count, new_offset = readPVSize(buf, offset, isbe)
+                    field_tree:append_text(string.format(" (%d fields)", field_count))
+                    offset = new_offset
+                    
+                    -- Limit field count
+                    if field_count > 50 then
+                        field_count = 20
+                    end
+                    
+                    for i = 1, field_count do
+                        if offset >= buf:len() then break end
+                        
+                        -- Read field name
+                        local field_name, name_offset = readPVString(buf, offset, isbe)
+                        if field_name and field_name ~= "" then
+                            local name_len = name_offset - offset
+                            if name_len > 0 and name_len <= buf:len() - offset then
+                                field_tree:add(fpvd_field_name, buf(offset, name_len), field_name)
+                            end
+                        end
+                        offset = name_offset
+                        
+                        -- Recursively parse field type
+                        offset = parsePVField(buf, offset, isbe, field_tree, depth + 1)
+                    end
+                end
+            end
+        end
+        
+    elseif type_byte == 0x60 then -- string
+        field_tree:append_text(" (string type)")
+    elseif type_byte >= 0x20 and type_byte <= 0x2B then -- numeric types
+        field_tree:append_text(string.format(" (%s type)", type_name))
+    elseif type_byte == 0x08 then -- boolean
+        field_tree:append_text(" (boolean type)")
+    elseif type_byte >= 0x40 and type_byte <= 0x4B then -- array types
+        field_tree:append_text(string.format(" (%s type)", type_name))
+    elseif type_byte == 0x50 then -- boundedString
+        field_tree:append_text(" (boundedString type)")
+    elseif type_byte == 0x68 then -- stringArray
+        field_tree:append_text(" (stringArray type)")
+    elseif type_byte >= 0x81 and type_byte <= 0x82 then -- complex arrays
+        field_tree:append_text(string.format(" (%s type)", type_name))
+    else
+        field_tree:append_text(string.format(" (unhandled type 0x%02X)", type_byte))
+    end
+    
+    return offset
 end
 
--- PVData decoder function - Phase 2: Structure parsing
+-- PVData decoder function - Phase 2: Structure parsing  
 local function decodePVData(buf, pkt, t, isbe, label)
     if not buf or buf:len() == 0 then
         return
@@ -458,44 +557,23 @@ local function decodePVData(buf, pkt, t, isbe, label)
     -- Create subtree for PVData
     local pvd_tree = t:add(fpvd_struct, buf, label or "PVData")
     
-    -- Debug: Show first few bytes of buffer using proper Wireshark API
-    if buf:len() >= 4 then
-        local debug_buf = buf(0, 4)
-        pvd_tree:add(fpvd_introspection, debug_buf, string.format("Debug: First 4 bytes = 0x%02X 0x%02X 0x%02X 0x%02X", 
-                     buf(0,1):uint(), buf(1,1):uint(), buf(2,1):uint(), buf(3,1):uint()))
+    -- Safe debug: just show first few bytes without string formatting
+    if buf:len() > 0 then
+        pvd_tree:add(fpvd_debug, buf(0, math.min(4, buf:len())), "First bytes (hex view)")
     end
     
-    -- Phase 2: Parse introspection and data sections
-    local offset = 0
-    
+    -- Simple parsing: just show first byte and remaining data
     if buf:len() > 0 then
-        -- Try to parse as introspection + data
-        local intro_tree = pvd_tree:add(fpvd_introspection, buf(0, math.min(buf:len(), 64)), string.format("Introspection (%d bytes total)", buf:len()))
+        local first_byte = buf(0, 1):uint()
+        local type_name = PVD_TYPES[first_byte] or "unknown"
         
-        -- Parse the root structure
-        local parsed_offset = parsePVField(buf, offset, isbe, intro_tree, 0)
+        -- Show first byte without complex string formatting  
+        local first_tree = pvd_tree:add(fpvd_introspection, buf(0, 1), "Type byte")
+        first_tree:append_text(" = " .. type_name)
         
-        -- Add debugging info
-        if parsed_offset > offset then
-            intro_tree:append_text(string.format(" [parsed %d bytes]", parsed_offset - offset))
-        end
-        
-        -- Show remaining data as values
-        if parsed_offset < buf:len() then
-            local remaining_buf = buf(parsed_offset)
-            pvd_tree:add(fpvd_value, remaining_buf, string.format("Data Values (%d bytes at offset %d)", remaining_buf:len(), parsed_offset))
-        elseif parsed_offset == buf:len() then
-            pvd_tree:append_text(" [No data values - introspection only]")
-        end
-        
-        -- Fallback: if parsing failed, show raw data
-        if parsed_offset <= offset then
-            intro_tree:append_text(" [parsing failed, showing raw data]")
-            local fallback_len = math.min(buf:len(), 16)
-            intro_tree:add(fpvd_introspection, buf(0, fallback_len), "Raw Introspection (first 16 bytes)")
-            if buf:len() > 16 then
-                pvd_tree:add(fpvd_value, buf(16), "Raw Data Values")
-            end
+        -- Show remaining data
+        if buf:len() > 1 then
+            pvd_tree:add(fpvd_value, buf(1), "Data bytes")
         end
     end
     
@@ -968,7 +1046,7 @@ local function pva_client_op (buf, pkt, t, isbe, cmd)
     cmd:add(fsubcmd_get, buf(8,1), subcmd)
     cmd:add(fsubcmd_gtpt, buf(8,1), subcmd)
     if buf:len()>9 then
-        decodePVData(buf(9), pkt, t, isbe, "PVData Body")
+        decodePVData(buf(9):tvb(), pkt, t, isbe, "PVData Body")
     end
 
     pkt.cols.info:append(string.format("%s(sid=%u, ioid=%u, sub=%02x), ", cname, sid, ioid, subcmd))
@@ -999,7 +1077,7 @@ local function pva_server_op (buf, pkt, t, isbe, cmd)
         buf = decodeStatus(buf(0), pkt, t, isbe)
     end
     if buf and buf:len()>0 then
-        decodePVData(buf(0), pkt, t, isbe, "PVData Body")
+        decodePVData(buf, pkt, t, isbe, "PVData Body")
     end
 
     pkt.cols.info:append(string.format("%s(ioid=%u, sub=%02x), ", cname, ioid, subcmd))
