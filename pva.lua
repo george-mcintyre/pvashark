@@ -1589,7 +1589,7 @@ function decodePVData(buf, pkt, t, isbe, label)
         if union_name ~= "" then
             -- Enhanced NT type detection and create clean tree
             local nt_type, nt_info = detectNTType(union_name)
-            
+
             if nt_type ~= "Unknown" then
                 -- Replace the main tree text with just the NT Type
                 pvd_tree:set_text(string.format("NT Type: %s", nt_type))
@@ -1619,7 +1619,7 @@ function decodePVData(buf, pkt, t, isbe, label)
                     if offset < buf:len() then
                         local field_type = buf(offset, 1):uint()
                         offset = offset + 1
-                        
+
                         -- Skip any additional type-specific data
                         if field_type == 0x80 then -- union - skip union name and field count
                             local union_name, union_name_offset = readPVAString(buf, offset, isbe, nil, nil)
@@ -1637,12 +1637,12 @@ function decodePVData(buf, pkt, t, isbe, label)
                         local field_type = buf(offset, 1):uint()
                         local type_name = PVD_TYPES[field_type] or string.format("unknown(0x%02X)", field_type)
                         offset = offset + 1
-                        
+
                         if field_type == 0x80 then -- union
                             -- Read union name
                             local union_name, union_name_offset = readPVAString(buf, offset, isbe, nil, nil)
                             offset = union_name_offset
-                            
+
                             -- Display with proper formatting for empty union names
                             local display_text
                             if union_name ~= "" then
@@ -1651,28 +1651,28 @@ function decodePVData(buf, pkt, t, isbe, label)
                                 display_text = string.format("union: %s", field_name)
                             end
                             local union_tree = pvd_tree:add(buf(offset - union_name_offset, union_name_offset), display_text)
-                            
+
                             -- Read union field count
                             local union_field_count, union_count_offset = readPVASize(buf, offset, isbe)
                             offset = union_count_offset
-                            
+
                             -- Parse union choices
                             for j = 1, math.min(union_field_count, 20) do
                                 if offset >= buf:len() then break end
-                                
+
                                 local choice_name, choice_name_offset = readPVAString(buf, offset, isbe, nil, nil)
                                 offset = choice_name_offset
-                                
+
                                 if offset < buf:len() then
                                     local choice_type = buf(offset, 1):uint()
                                     local choice_type_name = PVD_TYPES[choice_type] or string.format("unknown(0x%02X)", choice_type)
                                     offset = offset + 1
-                                    
+
                                     -- Display as "type (0xXX): name"
                                     union_tree:add(buf(offset - 1, 1), string.format("%s (0x%02X): %s", choice_type_name, choice_type, choice_name))
                                 end
                             end
-                            
+
                         else
                             -- Simple type: display as "type (0xXX): name"
                             pvd_tree:add(buf(offset - 1, 1), string.format("%s (0x%02X): %s", type_name, field_type, field_name))
@@ -1684,7 +1684,7 @@ function decodePVData(buf, pkt, t, isbe, label)
 
     elseif first_byte == 0x7F then -- structure
         pvd_tree:set_text("Structure")
-        
+
         -- Parse field count and fields
         if offset < buf:len() then
             local field_count, count_offset = readPVASize(buf, offset, isbe)
@@ -1703,7 +1703,7 @@ function decodePVData(buf, pkt, t, isbe, label)
                     local field_type = buf(offset, 1):uint()
                     local type_name = PVD_TYPES[field_type] or string.format("unknown(0x%02X)", field_type)
                     offset = offset + 1
-                    
+
                     -- Simple type: display as "type (0xXX): name"
                     pvd_tree:add(buf(offset - 1, 1), string.format("%s (0x%02X): %s", type_name, field_type, field_name))
                 end
@@ -1712,31 +1712,31 @@ function decodePVData(buf, pkt, t, isbe, label)
 
     elseif first_byte == 0x01 then -- introspectionOnly - values only
         pvd_tree:set_text("Values Only")
-        
+
         -- Parse the value data with clean formatting
         if offset < buf:len() then
             -- Read discriminator to see which field is active
             local discriminator, disc_offset = readPVASize(buf, offset, isbe)
             offset = disc_offset
-            
+
             if discriminator == 0 and offset + 3 < buf:len() then
-                -- Choice 0 = "value" field (int type) 
+                -- Choice 0 = "value" field (int type)
                 local int_val = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
                 pvd_tree:add(buf(offset, 4), string.format("value: %d", int_val))
                 offset = offset + 4
-                
+
             elseif discriminator == 1 and offset < buf:len() then
                 -- Choice 1 = "alarm" union
                 local alarm_disc, alarm_disc_offset = readPVASize(buf, offset, isbe)
                 offset = alarm_disc_offset
-                
+
                 if alarm_disc == 0 and offset + 3 < buf:len() then
                     -- severity
                     local severity = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
                     pvd_tree:add(buf(offset, 4), string.format("alarm.severity: %d", severity))
                     offset = offset + 4
                 elseif alarm_disc == 1 and offset + 3 < buf:len() then
-                    -- status  
+                    -- status
                     local status = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
                     pvd_tree:add(buf(offset, 4), string.format("alarm.status: %d", status))
                     offset = offset + 4
@@ -1749,13 +1749,13 @@ function decodePVData(buf, pkt, t, isbe, label)
                         offset = str_offset + str_len
                     end
                 end
-                
+
             elseif discriminator == 2 and offset + 3 < buf:len() then
                 -- Choice 2 = "timeStamp" field
                 local timestamp_val = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
                 pvd_tree:add(buf(offset, 4), string.format("timeStamp: %d", timestamp_val))
                 offset = offset + 4
-                
+
             else
                 -- Unknown discriminator or insufficient data
                 if offset < buf:len() then
