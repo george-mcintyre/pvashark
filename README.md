@@ -360,16 +360,16 @@ sub‑commands are in **byte 0** of payload.  Most channel operations use the fo
    │  ├─ Init: No (0)
    │  ├─ Destroy: No (0)
    │  └─ Process: No (0)
-   └─ value (0x0E: NTScalar)
-      ├─ value (0x0B: float64): 
-      ├─ alarm (0x0D: alarm_t) 
-      │  ├─ severity (0x04: int32_t): 
-      │  ├─ status (0x04: int32_t):  
-      │  └─ message (0x0C: string):  
-      └─ timeStamp (0x0D: time_t) 
-         ├─ secondsPastEpoch (0x05: int64_t): 
-         ├─ nanoseconds: (0x04: int32_t): 
-         └─ userTag (0x04: int32_t): 
+   └─ value (0x80: NTScalar)
+      ├─ value (0x43: double): 
+      ├─ alarm (0x80: alarm_t) 
+      │  ├─ severity (0x22: int32_t): 
+      │  ├─ status (0x22: int32_t):  
+      │  └─ message (0x60: string):  
+      └─ timeStamp (0x80: time_t) 
+         ├─ secondsPastEpoch (0x23: int64_t): 
+         ├─ nanoseconds: (0x22: int32_t): 
+         └─ userTag (0x22: int32_t): 
 ```
 
 #### 4.4.2 Client GET Simple Scalar Byte
@@ -393,7 +393,7 @@ sub‑commands are in **byte 0** of payload.  Most channel operations use the fo
    │  └─ Process: No (0)
    ├─ Status: OK (0xFF)
    ├─ BitSet: 0 bytes (full value)
-   └─ value (0x06: uint8_t): 42
+   └─ value (0x24: uint8_t): 42
 ```
 
 #### 4.4.3 Client PUT Simple Scalar Integer
@@ -416,7 +416,7 @@ sub‑commands are in **byte 0** of payload.  Most channel operations use the fo
    │  ├─ Destroy: No (0)
    │  └─ Process: No (0)
    ├─ BitSet: 0 bytes (full value update)
-   └─ value (0x04: int32_t): 1234
+   └─ value (0x22: int32_t): 1234
 ```
 
 
@@ -480,29 +480,30 @@ The PVXS implementation maps these bytes exactly to the EPICS pvData enumeration
 
 #### 7.1.1 Standard Type Codes
 
+**PVXS TypeCodes** (from `src/pvxs/data.h`):
+
 |   Code | Kind             | Array code | Size | Description                       |
 |-------:|------------------|-----------:|------|-----------------------------------|
-| `0x00` | **null**         |          — | 0    | Special terminator                |
-| `0x01` | **bool**         |     `0x11` | 1    | Boolean (0/1)                     |
-| `0x02` | **int8_t**       |     `0x12` | 1    | Signed 8‑bit integer              |
-| `0x03` | **int16_t**      |     `0x13` | 2    | Signed 16‑bit integer             |
-| `0x04` | **int32_t**      |     `0x14` | 4    | Signed 32‑bit integer             |
-| `0x05` | **int64_t**      |     `0x15` | 8    | Signed 64‑bit integer             |
-| `0x06` | **uint8_t**      |     `0x16` | 1    | Unsigned 8‑bit integer            |
-| `0x07` | **uint16_t**     |     `0x17` | 2    | Unsigned 16‑bit integer           |
-| `0x08` | **uint32_t**     |     `0x18` | 4    | Unsigned 32‑bit integer           |
-| `0x09` | **uint64_t**     |     `0x19` | 8    | Unsigned 64‑bit integer           |
-| `0x0A` | **float32**      |     `0x1A` | 4    | IEEE‑754 32‑bit float             |
-| `0x0B` | **float64**      |     `0x1B` | 8    | IEEE‑754 64‑bit double            |
-| `0x0C` | **string**       |     `0x1C` | var  | UTF‑8 encoded string              |
-| `0x0D` | **structure**    |     `0x2D` | —    | Composite structure               |
-| `0x0E` | **union**        |     `0x2E` | —    | Discriminated union               |
-| `0x0F` | **any**          |     `0x2F` | —    | "variant *any*" type              |
-| `0x20` | **structure []** |          — | —    | StructArray (array of structures) |
-| `0x21` | **union []**     |          — | —    | UnionArray                        |
-| `0x22` | **any []**       |          — | —    | AnyArray                          |
+| `0x00` | **bool**         |     `0x08` | 1    | Boolean (0/1)                     |
+| `0x20` | **int8_t**       |     `0x28` | 1    | Signed 8‑bit integer              |
+| `0x21` | **int16_t**      |     `0x29` | 2    | Signed 16‑bit integer             |
+| `0x22` | **int32_t**      |     `0x2A` | 4    | Signed 32‑bit integer             |
+| `0x23` | **int64_t**      |     `0x2B` | 8    | Signed 64‑bit integer             |
+| `0x24` | **uint8_t**      |     `0x2C` | 1    | Unsigned 8‑bit integer            |
+| `0x25` | **uint16_t**     |     `0x2D` | 2    | Unsigned 16‑bit integer           |
+| `0x26` | **uint32_t**     |     `0x2E` | 4    | Unsigned 32‑bit integer           |
+| `0x27` | **uint64_t**     |     `0x2F` | 8    | Unsigned 64‑bit integer           |
+| `0x42` | **float**        |     `0x4A` | 4    | IEEE‑754 32‑bit float             |
+| `0x43` | **double**       |     `0x4B` | 8    | IEEE‑754 64‑bit double            |
+| `0x60` | **string**       |     `0x68` | var  | UTF‑8 encoded string              |
+| `0x80` | **struct**       |     `0x88` | —    | Composite structure               |
+| `0x81` | **union**        |     `0x89` | —    | Discriminated union               |
+| `0x82` | **any**          |     `0x8A` | —    | "variant *any*" type              |
+| `0xFD` | **[cache store]**|          — | —    | Store type definition in cache    |
+| `0xFE` | **[cache fetch]**|          — | —    | Fetch type definition from cache  |
+| `0xFF` | **null**         |          — | 0    | Null value marker                 |
 
-> **Note**: The PVXS TypeCode class enumerates exactly these constants (see `src/type.cpp`).
+> **Note**: These are the actual TypeCodes from the PVXS implementation (`src/pvxs/data.h`). The original document incorrectly listed codes 0x00-0x22.
 
 
 ### 7.2 FieldDesc Tree Encoding
@@ -519,7 +520,7 @@ The FieldDesc tree describes the structure of data fields. Each node follows thi
 |   | ...                   |        | ...          |        | ...                                 |
 
 **Where:**
-- **TypeCode**: Single byte from the standard type codes (0x00-0x22)
+- **TypeCode**: Single byte from the PVXS type codes (see table above)
 - **Type ID**: Optional string name for the structure or union type
 - **Field Count**: Variable-length size indicating number of members
 - **Field Definitions**: For each member: field name (string) + nested FieldDesc
@@ -531,99 +532,99 @@ The FieldDesc tree describes the structure of data fields. Each node follows thi
 
 | Description       | Protocol |
 |-------------------|----------|
-| TypeCode: int32_t | `0x04`   |
+| TypeCode: int32_t | `0x22`   |
 
 **Wireshark Display:**
 ```
-└─ value (0x04: int32_t)
+└─ value (0x22: int32_t)
 ```
 
 **Simple Structure:**
 
 | Description                        | Protocol | ...                | ... |
 |------------------------------------|----------|--------------------|-----|
-| TypeCode: structure                | `0x0D`   | `0x08` `MyStruct`  |     |
+| TypeCode: struct                   | `0x80`   | `0x08` `MyStruct`  |     |
 | Type ID (Size=8 + UTF-8 string)    |          | `0x02`             |     |
 | Field count: 2 fields              |          | `0x06` `field1`    |     |
-| Field name (Size=6 + UTF-8 string) |          | `0x04`             |     |
+| Field name (Size=6 + UTF-8 string) |          | `0x22`             |     |
 | Field type: int32_t                |          | `0x06` `field2`    |     |
-| Field name (Size=6 + UTF-8 string) |          | `0x0B`             |     |
-| Field type: float64                |          |                    |     |
+| Field name (Size=6 + UTF-8 string) |          | `0x43`             |     |
+| Field type: double                 |          |                    |     |
 
 **Wireshark Display:**
 ```
-└─ value (0x0D: MyStruct)
-   ├─ field1 (0x04: int32_t):
-   └─ field2 (0x0B: float64):
+└─ value (0x80: MyStruct)
+   ├─ field1 (0x22: int32_t):
+   └─ field2 (0x43: double):
 ```
 
 **Union:**
 
 | Description                         | Protocol | ...                | ... |
 |-------------------------------------|----------|--------------------|-----|
-| TypeCode: union                     | `0x0E`   | `0x07` `MyUnion`   |     |
+| TypeCode: union                     | `0x81`   | `0x07` `MyUnion`   |     |
 | Type ID (Size=7 + UTF-8 string)     |          | `0x02`             |     |
 | Choice count: 2 choices             |          | `0x07` `choice1`   |     |
-| Choice name (Size=7 + UTF-8 string) |          | `0x04`             |     |
+| Choice name (Size=7 + UTF-8 string) |          | `0x22`             |     |
 | Choice type: int32_t                |          | `0x07` `choice2`   |     |
-| Choice name (Size=7 + UTF-8 string) |          | `0x0C`             |     |
+| Choice name (Size=7 + UTF-8 string) |          | `0x60`             |     |
 | Choice type: string                 |          |                    |     |
 
 **Wireshark Display:**
 ```
-└─ value (0x0E: MyUnion)
-   ├─ choice1 (0x04: int32_t):
-   └─ choice2 (0x0C: string):
+└─ value (0x81: MyUnion)
+   ├─ choice1 (0x22: int32_t):
+   └─ choice2 (0x60: string):
 ```
 
 **Nested Structure:**
 
 | Description                        | Protocol            | ...               | ...               |
 |------------------------------------|---------------------|-------------------|-------------------|
-| TypeCode: structure                | `0x0D`              |                   |                   |
+| TypeCode: struct                   | `0x80`              |                   |                   |
 | Type ID (Size=9 + UTF-8 string)    | `0x09` `Container`  |                   |                   |
 | Field count: 2 fields              |                     | `0x02`            |                   |
 | Field name (Size=5 + UTF-8 string) |                     | `0x05` `value`    |                   |
-| Field type: int32_t                |                     | `0x04`            |                   |
+| Field type: uint32_t               |                     | `0x26`            |                   |
 | Field name (Size=5 + UTF-8 string) |                     | `0x05` `alarm`    |                   |
-| Field type: structure (nested)     |                     | `0x0D`            |                   |
+| Field type: struct (nested)        |                     | `0x80`            |                   |
 | Type ID (Size=7 + UTF-8 string)    |                     | `0x07` `alarm_t`  |                   |
 | Field count: 3 fields              |                     |                   | `0x03`            |
 | Field name (Size=8 + UTF-8 string) |                     |                   | `0x08` `severity` |
-| Field type: int32_t                |                     |                   | `0x04`            |
+| Field type: int32_t                |                     |                   | `0x22`            |
 | Field name (Size=6 + UTF-8 string) |                     |                   | `0x06` `status`   |
-| Field type: int32_t                |                     |                   | `0x04`            |
+| Field type: int32_t                |                     |                   | `0x22`            |
 | Field name (Size=7 + UTF-8 string) |                     |                   | `0x07` `message`  |
-| Field type: string                 |                     |                   | `0x0C`            |
+| Field type: string                 |                     |                   | `0x60`            |
 
 **Wireshark Display:**
 ```
-└─ value (0x0D: Container)
-   ├─ value (0x04: int32_t):
-   └─ alarm (0x0D: alarm_t)
-      ├─ severity (0x04: int32_t):
-      ├─ status (0x04: int32_t):
-      └─ message (0x0C: string):
+└─ value (0x80: Container)
+   ├─ value (0x26: uint32_t):
+   └─ alarm (0x80: alarm_t)
+      ├─ severity (0x22: int32_t):
+      ├─ status (0x22: int32_t):
+      └─ message (0x60: string):
 ```
 
 **Structure Array:**
 
 | Description                        | Protocol | ...               |
 |------------------------------------|----------|-------------------|
-| TypeCode: structure array          | `0x20`   |                   |
-| Element type: structure            | `0x0D`   | `0x05` `Point`    |
+| TypeCode: struct array             | `0x88`   |                   |
+| Element type: struct               | `0x80`   | `0x05` `Point`    |
 | Type ID (Size=5 + UTF-8 string)    |          | `0x02`            |
 | Field count: 2 fields              |          | `0x01` `x`        |
-| Field name (Size=1 + UTF-8 string) |          | `0x04`            |
+| Field name (Size=1 + UTF-8 string) |          | `0x22`            |
 | Field type: int32_t                |          | `0x01` `y`        |
-| Field name (Size=1 + UTF-8 string) |          | `0x04`            |
+| Field name (Size=1 + UTF-8 string) |          | `0x22`            |
 | Field type: int32_t                |          |                   |
 
 **Wireshark Display:**
 ```
-└─ value (0x20: Point[])
-   ├─ x (0x04: int32_t):
-   └─ y (0x04: int32_t):
+└─ value (0x88: Point[])
+   ├─ x (0x22: int32_t):
+   └─ y (0x22: int32_t):
 ```
 
 #### 7.2.3 Tree Traversal
@@ -709,7 +710,7 @@ A minimal **ChannelGet response** for a PV of type *double* might be:
 | Sub-command: regular GET                                 | `0x00`                                                  |
 | Status: OK (single 0xFF byte)                            | `0xFF`                                                  |
 | BitSet: 0 bytes (no changed bits, implies full value)    | `0x00`                                                  |
-| TypeCode: float64                                        | `0x0A`                                                  |
+| TypeCode: double                                         | `0x43`                                                  |
 | Value: IEEE-754 double 100.2                             | `0x40` `0x59` `0x0C` `0xCC` `0xCC` `0xCC` `0xCC` `0xCD` |
 
 **Wireshark Display:**
@@ -730,7 +731,7 @@ A minimal **ChannelGet response** for a PV of type *double* might be:
    │  └─ Process: No (0)
    ├─ Status: OK (0xFF)
    ├─ BitSet: 0 bytes (no changed bits)
-   └─ value (0x0A: float64): 100.2
+   └─ value (0x43: double): 100.2
 ```
 
 The same channel, when monitored, would begin with a `Monitor‑INIT` (type tree identical), then receive periodic **server→client** messages re‑using that tree and only sending a `BitSet` + `value` when the `value` field actually changes.
@@ -774,13 +775,13 @@ A **ChannelPut request** for an **established channel** where the `Point` struct
    │  ├─ Destroy: No (0)
    │  └─ Process: No (0)
    ├─ BitSet: 0 bytes (full value update)
-   └─ value (0x20: Point[]): 2 elements
+   └─ value (0x88: Point[]): 2 elements
       ├─ Point[0]
-      │  ├─ x (0x0B: float64): 3.412
-      │  └─ y (0x0B: float64): 12.3123
+      │  ├─ x (0x43: double): 3.412
+      │  └─ y (0x43: double): 12.3123
       └─ Point[1]
-         ├─ x (0x0B: float64): -12.523
-         └─ y (0x0B: float64): 20.2012
+         ├─ x (0x43: double): -12.523
+         └─ y (0x43: double): 20.2012
 ```
 
 > **Note**: For new channels, the first PUT operation may include a FieldDesc (type definition). Subsequent operations on established channels can omit the type information, as shown above, for improved efficiency.
@@ -824,44 +825,44 @@ An NTScalar structure would be encoded as:
 
 | Description                           | Protocol                       | ...                | ...                       |
 |---------------------------------------|--------------------------------|--------------------|---------------------------|
-| TypeCode: union                       | `0x0E`                         |                    |                           |
+| TypeCode: struct                      | `0x80`                         |                    |                           |
 | Type ID (Size=22 + UTF-8 string)      | `0x16` `epics:nt/NTScalar:1.0` |                    |                           |
-| Union choice count: 3 choices         |                                | `0x03`             |                           |
-| Choice 0 name (Size=5 + UTF-8 string) |                                | `0x05` `value`     |                           |
-| Choice 0 type: int32_t                |                                | `0x04`             |                           |
-| Choice 1 name (Size=5 + UTF-8 string) |                                | `0x05` `alarm`     |                           |
-| Choice 1 type: structure              |                                | `0x0D`             |                           |
-| Choice 1 Type ID:                     |                                | `0x07` `alarm_t`   |                           |
+| Field count: 3 fields                 |                                | `0x03`             |                           |
+| Field name (Size=5 + UTF-8 string)    |                                | `0x05` `value`     |                           |
+| Field type: uint32_t                  |                                | `0x26`             |                           |
+| Field name (Size=5 + UTF-8 string)    |                                | `0x05` `alarm`     |                           |
+| Field type: struct                    |                                | `0x80`             |                           |
+| Type ID:                              |                                | `0x07` `alarm_t`   |                           |
 | Field count: 3 fields                 |                                |                    | `0x03`                    |
 | Field name (Size=8 + UTF-8 string)    |                                |                    | `0x08` `severity`         |
-| Field type: int32_t                   |                                |                    | `0x04`                    |
+| Field type: int32_t                   |                                |                    | `0x22`                    |
 | Field name (Size=6 + UTF-8 string)    |                                |                    | `0x06` `status`           |
-| Field type: int32_t                   |                                |                    | `0x04`                    |
+| Field type: int32_t                   |                                |                    | `0x22`                    |
 | Field name (Size=7 + UTF-8 string)    |                                |                    | `0x07` `message`          |
-| Field type: string                    |                                |                    | `0x0C`                    |
-| Choice 2 name (Size=9 + UTF-8 string) |                                | `0x09` `timeStamp` |                           |
-| Choice 2 type: structure              |                                | `0x0D`             | `                         |
+| Field type: string                    |                                |                    | `0x60`                    |
+| Field name (Size=9 + UTF-8 string)    |                                | `0x09` `timeStamp` |                           |
+| Field type: struct                    |                                | `0x80`             |                           |
 | Type ID (Size=6 + UTF-8 string)       |                                | `0x06` `time_t`    |                           |
 | Field count: 3 fields                 |                                |                    | `0x03`                    |
 | Field name (Size=17 + UTF-8 string)   |                                |                    | `0x11` `secondsPastEpoch` |
-| Field type: int64_t                   |                                |                    | `0x05`                    |
+| Field type: int64_t                   |                                |                    | `0x23`                    |
 | Field name (Size=11 + UTF-8 string)   |                                |                    | `0x0B` `nanoseconds`      |
-| Field type: int32_t                   |                                |                    | `0x04`                    |
+| Field type: int32_t                   |                                |                    | `0x22`                    |
 | Field name (Size=7 + UTF-8 string)    |                                |                    | `0x07` `userTag`          |
-| Field type: int32_t                   |                                |                    | `0x04`                    |
+| Field type: int32_t                   |                                |                    | `0x22`                    |
 
 **Wireshark Display:**
 ```
-└─ value (0x0E: NTScalar)
-   ├─ value (0x04: int32_t):
-   ├─ alarm (0x0D: alarm_t)
-   │  ├─ severity (0x04: int32_t):
-   │  ├─ status (0x04: int32_t):
-   │  └─ message (0x0C: string):
-   └─ timeStamp (0x0D: time_t)
-      ├─ secondsPastEpoch (0x05: int64_t):
-      ├─ nanoseconds (0x04: int32_t):
-      └─ userTag (0x04: int32_t):
+└─ value (0x80: NTScalar)
+   ├─ value (0x26: uint32_t):
+   ├─ alarm (0x80: alarm_t)
+   │  ├─ severity (0x22: int32_t):
+   │  ├─ status (0x22: int32_t):
+   │  └─ message (0x60: string):
+   └─ timeStamp (0x80: time_t)
+      ├─ secondsPastEpoch (0x23: int64_t):
+      ├─ nanoseconds (0x22: int32_t):
+      └─ userTag (0x22: int32_t):
 ```
 
 Normative‑type instances declare themselves by sending a `FieldDesc` whose **top‑level ID string** equals the NT name (e.g. `"epics:nt/NTScalar:1.0"`) so that generic GUIs can recognise and render them automatically.
