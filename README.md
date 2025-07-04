@@ -73,6 +73,105 @@ No additional payload body follows these 8‑byte headers.
 | `04` | S → C         | **Search Response** | server GUID, seq‑ID, addr, port, proto, *found*, list (inst‑IDs)         |
 | `16` | Forwarder → S | **Origin Tag**      | IPv6 address of original receiver (16 B)                                 |
 
+#### 4.1.1 BEACON Message Example
+
+**Wireshark Display:**
+```
+└─ Process Variable Access Protocol
+   ├─ Magic: 0xCA
+   ├─ Version: 2
+   ├─ Flags: 0x40
+   │  ├─ Direction: server (1)
+   │  ├─ Byte order: LSB (0)
+   │  └─ Message type: Application (0)
+   ├─ Command: Beacon (0x00)
+   ├─ Payload Size: 45
+   ├─ GUID: 12 bytes (server identifier)
+   ├─ Beacon sequence#: 5
+   ├─ Beacon change count: 2
+   ├─ Address: 16 bytes (IPv6 address)
+   ├─ Port: 5075
+   └─ Transport Protocol: "tcp"
+```
+
+#### 4.1.2 Client SEARCH Request Examples
+
+**SEARCH with TCP protocol:**
+
+**Wireshark Display:**
+```
+└─ Process Variable Access Protocol
+   ├─ Magic: 0xCA
+   ├─ Version: 2
+   ├─ Flags: 0x00
+   │  ├─ Direction: client (0)
+   │  ├─ Byte order: LSB (0)
+   │  └─ Message type: Application (0)
+   ├─ Command: Search Request (0x03)
+   ├─ Payload Size: 52
+   ├─ Search Sequence #: 1234
+   ├─ Mask: 0x81
+   │  ├─ Reply: Required (1)
+   │  └─ Reply: Unicast (1)
+   ├─ Address: 16 bytes (reply address)
+   ├─ Port: 5075
+   ├─ Transport Protocol: "tcp"
+   ├─ PV Count: 2
+   ├─ CID: 100
+   ├─ Name: "PV:temperature"
+   ├─ CID: 101
+   └─ Name: "PV:pressure"
+```
+
+**SEARCH with TLS protocol:**
+
+**Wireshark Display:**
+```
+└─ Process Variable Access Protocol
+   ├─ Magic: 0xCA
+   ├─ Version: 2
+   ├─ Flags: 0x80
+   │  ├─ Direction: client (0)
+   │  ├─ Byte order: MSB (1)
+   │  └─ Message type: Application (0)
+   ├─ Command: Search Request (0x03)
+   ├─ Payload Size: 48
+   ├─ Search Sequence #: 1718185572
+   ├─ Mask: 0x80
+   │  ├─ Reply: Optional (0)
+   │  └─ Reply: Unicast (1)
+   ├─ Address: 16 bytes (all zeros)
+   ├─ Port: 59615
+   ├─ Transport Protocols: 2 entries
+   │  ├─ Transport Protocol: "tls"
+   │  └─ Transport Protocol: "tcp"
+   ├─ PV Count: 1
+   ├─ CID: 305419896
+   └─ Name: "TESTPV"
+```
+
+#### 4.1.3 Server SEARCH RESPONSE with TLS
+
+**Wireshark Display:**
+```
+└─ Process Variable Access Protocol
+   ├─ Magic: 0xCA
+   ├─ Version: 2
+   ├─ Flags: 0x40
+   │  ├─ Direction: server (1)
+   │  ├─ Byte order: LSB (0)
+   │  └─ Message type: Application (0)
+   ├─ Command: Search Response (0x04)
+   ├─ Payload Size: 47
+   ├─ GUID: 12 bytes (server identifier)
+   ├─ Search Sequence #: 1235
+   ├─ Address: 16 bytes (server address)
+   ├─ Port: 5076
+   ├─ Transport Protocol: "tls"
+   ├─ Found: True
+   └─ CID: 102 (found PV)
+```
+
 ### 4.2 Connection / Security
 
 |  Cmd | Dir          | Name                      | Purpose                              |
@@ -82,6 +181,113 @@ No additional payload body follows these 8‑byte headers.
 | `06` | S→C          | **ACL Change** _(rare)_   | Dynamic permission update            |
 | `09` | C→S          | **Connection Validated**  | Final "auth OK/FAIL" status          |
 
+#### 4.2.1 Client CONNECTION VALIDATION with AUTHZ
+
+**Without X.509 (simple authentication):**
+
+**Wireshark Display:**
+```
+└─ Process Variable Access Protocol
+   ├─ Magic: 0xCA
+   ├─ Version: 2
+   ├─ Flags: 0x00
+   │  ├─ Direction: client (0)
+   │  ├─ Byte order: LSB (0)
+   │  └─ Message type: Application (0)
+   ├─ Command: Connection Validation (0x01)
+   ├─ Payload Size: 38
+   ├─ Client Queue Size: 16384
+   ├─ Client Introspection registry size: 512
+   ├─ Client QoS: 0x0000
+   ├─ AuthZ method: "plain"
+   ├─ AuthZ Flags: 0x01
+   ├─ AuthZ Elem-cnt: 2
+   ├─ AuthZ Entry 1
+   │  ├─ AuthZ name: "operator"
+   │  └─ AuthZ method: "plain"
+   └─ AuthZ Entry 2
+      ├─ AuthZ account: "controls"
+      └─ AuthZ method: "plain"
+```
+
+**With X.509 (certificate authentication):**
+
+**Wireshark Display:**
+```
+└─ Process Variable Access Protocol
+   ├─ Magic: 0xCA
+   ├─ Version: 2
+   ├─ Flags: 0x00
+   │  ├─ Direction: client (0)
+   │  ├─ Byte order: LSB (0)
+   │  └─ Message type: Application (0)
+   ├─ Command: Connection Validation (0x01)
+   ├─ Payload Size: 67
+   ├─ Client Queue Size: 16384
+   ├─ Client Introspection registry size: 512
+   ├─ Client QoS: 0x0000
+   ├─ AuthZ method: "x509"
+   ├─ AuthZ host: "client.facility.org"
+   ├─ AuthZ authority: "CA=facility.org"
+   ├─ AuthZ Flags: 0x02
+   ├─ AuthZ isTLS: 1
+   ├─ AuthZ Elem-cnt: 1
+   └─ AuthZ Entry 1
+      ├─ AuthZ name: "CN=client.facility.org"
+      └─ AuthZ method: "x509"
+```
+
+#### 4.2.2 Server CONNECTION VALIDATED with AUTHZ
+
+**Without X.509 (simple authentication success):**
+
+**Wireshark Display:**
+```
+└─ Process Variable Access Protocol
+   ├─ Magic: 0xCA
+   ├─ Version: 2
+   ├─ Flags: 0x40
+   │  ├─ Direction: server (1)
+   │  ├─ Byte order: LSB (0)
+   │  └─ Message type: Application (0)
+   ├─ Command: Connection Validated (0x09)
+   ├─ Payload Size: 28
+   ├─ Status: OK (0xFF)
+   ├─ AuthZ method: "plain"
+   ├─ AuthZ Flags: 0x01
+   ├─ AuthZ Elem-cnt: 1
+   └─ AuthZ Entry 1
+      ├─ AuthZ name: "operator"
+      ├─ AuthZ method: "plain"
+      └─ AuthZ response: "authenticated"
+```
+
+**With X.509 (certificate authentication success):**
+
+**Wireshark Display:**
+```
+└─ Process Variable Access Protocol
+   ├─ Magic: 0xCA
+   ├─ Version: 2
+   ├─ Flags: 0x40
+   │  ├─ Direction: server (1)
+   │  ├─ Byte order: LSB (0)
+   │  └─ Message type: Application (0)
+   ├─ Command: Connection Validated (0x09)
+   ├─ Payload Size: 45
+   ├─ Status: OK (0xFF)
+   ├─ AuthZ method: "x509"
+   ├─ AuthZ host: "server.facility.org"
+   ├─ AuthZ authority: "CA=facility.org"
+   ├─ AuthZ isTLS: 1
+   ├─ AuthZ Flags: 0x02
+   ├─ AuthZ Elem-cnt: 1
+   └─ AuthZ Entry 1
+      ├─ AuthZ name: "CN=client.facility.org"
+      ├─ AuthZ method: "x509"
+      └─ AuthZ response: "certificate_valid"
+```
+
 ### 4.3 Channel Lifecycle
 
 |  Cmd | Dir       | Name                | Key fields in body                                       |
@@ -90,6 +296,44 @@ No additional payload body follows these 8‑byte headers.
 | `08` | Either    | **Destroy Channel** | serverCID, clientCID                                     |
 | `0F` | C→S       | **Destroy Request** | serverCID, requestID                                     |
 | `15` | C→S       | **Cancel Request**  | serverCID, requestID                                     |
+
+#### 4.3.1 Client CREATE_CHANNEL Request
+
+**Wireshark Display:**
+```
+└─ Process Variable Access Protocol
+   ├─ Magic: 0xCA
+   ├─ Version: 2
+   ├─ Flags: 0x00
+   │  ├─ Direction: client (0)
+   │  ├─ Byte order: LSB (0)
+   │  └─ Message type: Application (0)
+   ├─ Command: Create Channel (0x07)
+   ├─ Payload Size: 35
+   ├─ PV Count: 2
+   ├─ CID: 201
+   ├─ Name: "PV:temperature"
+   ├─ CID: 202
+   └─ Name: "PV:pressure"
+```
+
+#### 4.3.2 Server CREATE_CHANNEL Response
+
+**Wireshark Display:**
+```
+└─ Process Variable Access Protocol
+   ├─ Magic: 0xCA
+   ├─ Version: 2
+   ├─ Flags: 0x40
+   │  ├─ Direction: server (1)
+   │  ├─ Byte order: LSB (0)
+   │  └─ Message type: Application (0)
+   ├─ Command: Create Channel (0x07)
+   ├─ Payload Size: 17
+   ├─ Client Channel ID: 201
+   ├─ Server Channel ID: 1005
+   └─ Status: OK (0xFF)
+```
 
 ### 4.4 Channel Operations 
 |  Cmd | Purpose                        | Description                                                                               |
@@ -110,6 +354,93 @@ sub‑commands are in **byte 0** of payload.  Most channel operations use the fo
 - `0x08`: INIT
 - `0x00`: EXEC 
 - `0x10`: DESTROY
+
+#### 4.4.1 Client GET NTScalar Double
+
+**Wireshark Display:**
+```
+└─ Process Variable Access Protocol
+   ├─ Magic: 0xCA
+   ├─ Version: 2
+   ├─ Flags: 0x00
+   │  ├─ Direction: client (0)
+   │  ├─ Byte order: LSB (0)
+   │  └─ Message type: Application (0)
+   ├─ Command: Channel Get (0x0A)
+   ├─ Payload Size: 9
+   ├─ Server Channel ID: 1005
+   ├─ Operation ID: 1001
+   ├─ Sub-command: 0x00
+   │  ├─ Init: No (0)
+   │  ├─ Destroy: No (0)
+   │  └─ Process: No (0)
+   └─ PVData Body
+      └─ FieldDesc: union "epics:nt/NTScalar:1.0" (0x0E)
+         ├─ Type ID: "epics:nt/NTScalar:1.0" (22 bytes)
+         ├─ Choice Count: 3
+         ├─ Choice: value
+         │  └─ Type: float64 (0x0B)
+         ├─ Choice: alarm
+         │  └─ FieldDesc: structure "alarm_t" (0x0D)
+         │     ├─ Field: severity → int32_t (0x04)
+         │     ├─ Field: status → int32_t (0x04)
+         │     └─ Field: message → string (0x0C)
+         └─ Choice: timeStamp
+            └─ FieldDesc: structure "time_t" (0x0D)
+               ├─ Field: secondsPastEpoch → int64_t (0x05)
+               ├─ Field: nanoseconds → int32_t (0x04)
+               └─ Field: userTag → int32_t (0x04)
+```
+
+#### 4.4.2 Client GET Simple Scalar Byte
+
+**Wireshark Display:**
+```
+└─ Process Variable Access Protocol
+   ├─ Magic: 0xCA
+   ├─ Version: 2
+   ├─ Flags: 0x00
+   │  ├─ Direction: client (0)
+   │  ├─ Byte order: LSB (0)
+   │  └─ Message type: Application (0)
+   ├─ Command: Channel Get (0x0A)
+   ├─ Payload Size: 10
+   ├─ Server Channel ID: 1006
+   ├─ Operation ID: 1002
+   ├─ Sub-command: 0x00
+   │  ├─ Init: No (0)
+   │  ├─ Destroy: No (0)
+   │  └─ Process: No (0)
+   ├─ Status: OK (0xFF)
+   ├─ BitSet: 0 bytes (full value)
+   └─ PVData Body
+      ├─ FieldDesc: uint8_t (0x06)
+      └─ Value: 42 (byte)
+```
+
+#### 4.4.3 Client PUT Simple Scalar Integer
+
+**Wireshark Display:**
+```
+└─ Process Variable Access Protocol
+   ├─ Magic: 0xCA
+   ├─ Version: 2
+   ├─ Flags: 0x00
+   │  ├─ Direction: client (0)
+   │  ├─ Byte order: LSB (0)
+   │  └─ Message type: Application (0)
+   ├─ Command: Channel Put (0x0B)
+   ├─ Payload Size: 13
+   ├─ Request ID: 1003
+   ├─ Server Channel ID: 1007
+   ├─ Sub-command: 0x00
+   │  ├─ Init: No (0)
+   │  ├─ Destroy: No (0)
+   │  └─ Process: No (0)
+   ├─ BitSet: 0 bytes (full value update)
+   └─ PVData Body
+      └─ Value: 1234 (int32_t)
+```
 
 
 ---
@@ -221,9 +552,9 @@ The FieldDesc tree describes the structure of data fields. Each node follows thi
 
 **Leaf Node (Scalar):**
 
-| Description       | Protocol | ... | ... |
-|-------------------|----------|-----|-----|
-| TypeCode: int32_t | `0x04`   |     |     |
+| Description       | Protocol |
+|-------------------|----------|
+| TypeCode: int32_t | `0x04`   |
 
 **Wireshark Display:**
 ```
@@ -321,16 +652,16 @@ The FieldDesc tree describes the structure of data fields. Each node follows thi
 
 **Structure Array:**
 
-| Description                        | Protocol | ...               | ... |
-|------------------------------------|----------|-------------------|-----|
-| TypeCode: structure array          | `0x20`   |                   |     |
-| Element type: structure            | `0x0D`   | `0x05` `Point`    |     |
-| Type ID (Size=5 + UTF-8 string)    |          | `0x02`            |     |
-| Field count: 2 fields              |          | `0x01` `x`        |     |
-| Field name (Size=1 + UTF-8 string) |          | `0x04`            |     |
-| Field type: int32_t                |          | `0x01` `y`        |     |
-| Field name (Size=1 + UTF-8 string) |          | `0x04`            |     |
-| Field type: int32_t                |          |                   |     |
+| Description                        | Protocol | ...               |
+|------------------------------------|----------|-------------------|
+| TypeCode: structure array          | `0x20`   |                   |
+| Element type: structure            | `0x0D`   | `0x05` `Point`    |
+| Type ID (Size=5 + UTF-8 string)    |          | `0x02`            |
+| Field count: 2 fields              |          | `0x01` `x`        |
+| Field name (Size=1 + UTF-8 string) |          | `0x04`            |
+| Field type: int32_t                |          | `0x01` `y`        |
+| Field name (Size=1 + UTF-8 string) |          | `0x04`            |
+| Field type: int32_t                |          |                   |
 
 **Wireshark Display:**
 ```
@@ -417,19 +748,19 @@ Bit numbering matches the depth‑first order of the `FieldDesc` tree.
 
 A minimal **ChannelGet response** for a PV of type *double* might be:
 
-| Description                                              | Protocol                                                | ... | ... |
-|----------------------------------------------------------|---------------------------------------------------------|-----|-----|
-| Magic: Always 0xCA                                       | `0xCA`                                                  |     |     |
-| Version: Protocol version 2                              | `0x02`                                                  |     |     |
-| Flags: server→client, little-endian, application message | `0x40`                                                  |     |     |
-| Command: Channel Get (0x0A)                              | `0x0A`                                                  |     |     |
-| PayloadSize: 17 bytes (little-endian)                    | `0x00` `0x00` `0x00` `0x11`                             |     |     |
-| RequestID: 1 (little-endian)                             | `0x00` `0x00` `0x00` `0x01`                             |     |     |
-| Sub-command: regular GET                                 | `0x00`                                                  |     |     |
-| Status: OK (single 0xFF byte)                            | `0xFF`                                                  |     |     |
-| BitSet: 0 bytes (no changed bits, implies full value)    | `0x00`                                                  |     |     |
-| TypeCode: float64                                        | `0x0A`                                                  |     |     |
-| Value: IEEE-754 double 100.2                             | `0x40` `0x59` `0x0C` `0xCC` `0xCC` `0xCC` `0xCC` `0xCD` |     |     |
+| Description                                              | Protocol                                                |
+|----------------------------------------------------------|---------------------------------------------------------|
+| Magic: Always 0xCA                                       | `0xCA`                                                  |
+| Version: Protocol version 2                              | `0x02`                                                  |
+| Flags: server→client, little-endian, application message | `0x40`                                                  |
+| Command: Channel Get (0x0A)                              | `0x0A`                                                  |
+| PayloadSize: 17 bytes (little-endian)                    | `0x00` `0x00` `0x00` `0x11`                             |
+| RequestID: 1 (little-endian)                             | `0x00` `0x00` `0x00` `0x01`                             |
+| Sub-command: regular GET                                 | `0x00`                                                  |
+| Status: OK (single 0xFF byte)                            | `0xFF`                                                  |
+| BitSet: 0 bytes (no changed bits, implies full value)    | `0x00`                                                  |
+| TypeCode: float64                                        | `0x0A`                                                  |
+| Value: IEEE-754 double 100.2                             | `0x40` `0x59` `0x0C` `0xCC` `0xCC` `0xCC` `0xCC` `0xCD` |
 
 **Wireshark Display:**
 ```
