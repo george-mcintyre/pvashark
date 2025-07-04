@@ -50,7 +50,58 @@ local stscodes = {
     [1] = "Warning",
     [2] = "Error",
     [3] = "Fatal Error",
-}
+-- PVXS TypeCodes (from src/pvxs/data.h)
+local TYPE_CODE_BOOLEAN = 0x00;
+
+local TYPE_CODE_BYTE = 0x20;
+local TYPE_CODE_SHORT = 0x21;
+local TYPE_CODE_INT = 0x22;
+local TYPE_CODE_LONG = 0x23;
+
+local TYPE_CODE_UBYTE = 0x24;
+local TYPE_CODE_USHORT = 0x25;
+local TYPE_CODE_UINT = 0x26;
+local TYPE_CODE_ULONG = 0x27;
+
+local TYPE_CODE_FLOAT = 0x42;
+local TYPE_CODE_DOUBLE = 0x43; 
+
+local TYPE_CODE_STRING = 0x60;
+
+local TYPE_CODE_STRUCT = 0x80;
+local TYPE_CODE_UNION = 0x81;
+local TYPE_CODE_ANY = 0x82;
+
+-- Array TypeCodes
+local TYPE_CODE_BOOLEAN_ARRAY = 0x08;
+
+local TYPE_CODE_BYTE_ARRAY = 0x28;
+local TYPE_CODE_SHORT_ARRAY = 0x29;
+local TYPE_CODE_INT_ARRAY = 0x2A;
+local TYPE_CODE_LONG_ARRAY = 0x2B;
+
+local TYPE_CODE_UBYTE_ARRAY = 0x2C;
+local TYPE_CODE_USHORT_ARRAY = 0x2D;
+local TYPE_CODE_UINT_ARRAY = 0x2E;
+local TYPE_CODE_ULONG_ARRAY = 0x2F;
+
+local TYPE_CODE_FLOAT_ARRAY = 0x4A;
+local TYPE_CODE_DOUBLE_ARRAY = 0x4B; 
+
+local TYPE_CODE_STRING_ARRAY = 0x68;
+
+local TYPE_CODE_STRUCT_ARRAY = 0x88;
+local TYPE_CODE_UNION_ARRAY = 0x89;
+local TYPE_CODE_ANY_ARRAY = 0x8A;
+
+-- Cache and special codes
+local CACHE_STORE_CODE = 0xFD;
+local CACHE_FETCH_CODE = 0xFE;
+local TYPE_CODE_NULL = 0xFF;
+
+-- Legacy codes (not in PVXS specification)
+local TYPE_CODE_INTROSPECTION_ONLY = 0x01;
+
 
 local placeholder= ProtoField.bytes("pva.placeholder", " ")
 
@@ -371,39 +422,7 @@ local function skipPVStructureLabelString(buf, isbe)
     end
 end
 
--- PVData type constants (Phase 2)
-local PVD_TYPES = {
-    [0x00] = "null",
-    [0x01] = "introspectionOnly",
-    [0x08] = "boolean",
-    [0x20] = "byte",
-    [0x21] = "short",
-    [0x22] = "int",
-    [0x23] = "long",
-    [0x24] = "ubyte",
-    [0x25] = "ushort",
-    [0x26] = "uint",
-    [0x27] = "ulong",
-    [0x2A] = "float",
-    [0x2B] = "double",
-    [0x40] = "byteArray",
-    [0x41] = "shortArray",
-    [0x42] = "intArray",
-    [0x43] = "longArray",
-    [0x44] = "ubyteArray",
-    [0x45] = "ushortArray",
-    [0x46] = "uintArray",
-    [0x47] = "ulongArray",
-    [0x4A] = "floatArray",
-    [0x4B] = "doubleArray",
-    [0x50] = "boundedString",
-    [0x60] = "string",
-    [0x68] = "stringArray",
-    [0x7F] = "structure",
-    [0x80] = "union",
-    [0x81] = "unionArray",
-    [0x82] = "structureArray"
-}
+
 
 -- Helper function to read PVData size (Phase 2)
 local function readPVSize(buf, offset, isbe)
@@ -450,10 +469,7 @@ local function parsePVField(buf, offset, isbe, tree, depth)
     offset = offset + 1
 
     -- Handle different field types
-    if type_byte == 0x01 then -- introspectionOnly
-        field_tree:append_text(" (introspection only - no data)")
-
-    elseif type_byte == 0x7F then -- structure
+    if type_byte == TYPE_CODE_STRUCT then -- struct
         if offset < buf:len() then
             local field_count, new_offset = readPVSize(buf, offset, isbe)
             field_tree:append_text(string.format(" (%d fields)", field_count))
@@ -487,7 +503,7 @@ local function parsePVField(buf, offset, isbe, tree, depth)
             end
         end
 
-    elseif type_byte == 0x80 then -- union
+    elseif type_byte == TYPE_CODE_UNION then -- union
         if offset < buf:len() then
             local union_name, name_offset = readPVString(buf, offset, isbe)
             if union_name and union_name ~= "" then
@@ -526,19 +542,19 @@ local function parsePVField(buf, offset, isbe, tree, depth)
             end
         end
 
-    elseif type_byte == 0x60 then -- string
+    elseif type_byte == TYPE_CODE_BOOLEAN then -- bool
+        field_tree:append_text(" (bool type)")
+    elseif type_byte >= TYPE_CODE_BYTE and type_byte <= TYPE_CODE_ULONG then -- integer types
+        field_tree:append_text(string.format(" (%s type)", type_name))
+    elseif type_byte == TYPE_CODE_FLOAT or type_byte == TYPE_CODE_DOUBLE then -- float types
+        field_tree:append_text(string.format(" (%s type)", type_name))
+    elseif type_byte == TYPE_CODE_STRING then -- string
         field_tree:append_text(" (string type)")
-    elseif type_byte >= 0x20 and type_byte <= 0x2B then -- numeric types
-        field_tree:append_text(string.format(" (%s type)", type_name))
-    elseif type_byte == 0x08 then -- boolean
-        field_tree:append_text(" (boolean type)")
-    elseif type_byte >= 0x40 and type_byte <= 0x4B then -- array types
-        field_tree:append_text(string.format(" (%s type)", type_name))
-    elseif type_byte == 0x50 then -- boundedString
-        field_tree:append_text(" (boundedString type)")
-    elseif type_byte == 0x68 then -- stringArray
-        field_tree:append_text(" (stringArray type)")
-    elseif type_byte >= 0x81 and type_byte <= 0x82 then -- complex arrays
+    elseif type_byte == TYPE_CODE_ANY then -- any
+        field_tree:append_text(" (any type)")
+    elseif type_byte == TYPE_CODE_BOOLEAN_ARRAY or (type_byte >= TYPE_CODE_BYTE_ARRAY and type_byte <= TYPE_CODE_ULONG_ARRAY) or 
+           type_byte == TYPE_CODE_FLOAT_ARRAY or type_byte == TYPE_CODE_DOUBLE_ARRAY or type_byte == TYPE_CODE_STRING_ARRAY or
+           (type_byte >= TYPE_CODE_STRUCT_ARRAY and type_byte <= TYPE_CODE_ANY_ARRAY) then -- array types
         field_tree:append_text(string.format(" (%s type)", type_name))
     else
         field_tree:append_text(string.format(" (unhandled type 0x%02X)", type_byte))
@@ -608,7 +624,7 @@ local function parseField(buf, offset, isbe, tree, depth)
     -- Handle nil tree gracefully - just advance offset without adding to tree
     local field_tree = tree and tree:add(buf(offset - 1, 1), string.format("Field Type: %s (0x%02X)", type_name, field_type)) or nil
 
-    if field_type == 0x7F then -- structure
+    if field_type == TYPE_CODE_STRUCT then -- struct
         local field_count, new_offset = readPVASize(buf, offset, isbe)
         if field_tree then field_tree:append_text(string.format(" - %d fields", field_count)) end
         offset = new_offset
@@ -625,7 +641,7 @@ local function parseField(buf, offset, isbe, tree, depth)
             offset = parseField(buf, offset, isbe, field_tree, depth + 1)
         end
 
-    elseif field_type == 0x80 then -- union
+    elseif field_type == TYPE_CODE_UNION then -- union
         -- Read union name first
         local union_name, name_offset = readPVAString(buf, offset, isbe, field_tree, field_tree and "Union Name" or nil)
         offset = name_offset
@@ -649,13 +665,18 @@ local function parseField(buf, offset, isbe, tree, depth)
             offset = parseField(buf, offset, isbe, field_tree, depth + 1)
         end
 
-    elseif field_type == 0x60 then -- string
+    elseif field_type == TYPE_CODE_STRING then -- string
         if field_tree then field_tree:append_text(" (string type)") end
 
-    elseif field_type >= 0x20 and field_type <= 0x2B then -- numeric types
+    elseif field_type >= TYPE_CODE_BYTE and field_type <= TYPE_CODE_ULONG then -- integer types
         if field_tree then field_tree:append_text(string.format(" (%s type)", type_name)) end
-
-    elseif field_type >= 0x40 and field_type <= 0x4B then -- array types
+    elseif field_type == TYPE_CODE_FLOAT or field_type == TYPE_CODE_DOUBLE then -- float types
+        if field_tree then field_tree:append_text(string.format(" (%s type)", type_name)) end
+    elseif field_type == TYPE_CODE_ANY then -- any
+        if field_tree then field_tree:append_text(" (any type)") end
+    elseif field_type == TYPE_CODE_BOOLEAN_ARRAY or (field_type >= TYPE_CODE_BYTE_ARRAY and field_type <= TYPE_CODE_ULONG_ARRAY) or 
+           field_type == TYPE_CODE_FLOAT_ARRAY or field_type == TYPE_CODE_DOUBLE_ARRAY or field_type == TYPE_CODE_STRING_ARRAY or
+           (field_type >= TYPE_CODE_STRUCT_ARRAY and field_type <= TYPE_CODE_ANY_ARRAY) then -- array types
         if field_tree then field_tree:append_text(string.format(" (%s type)", type_name)) end
 
     else
@@ -723,35 +744,35 @@ local function parseValue(buf, offset, field_type, isbe, tree, field_name)
 
     local type_name = PVD_TYPES[field_type] or "unknown"
 
-    if field_type == 0x08 then -- boolean
+    if field_type == TYPE_CODE_BOOLEAN then -- bool
         if offset < buf:len() then
             local value = buf(offset, 1):uint()
-            tree:add(buf(offset, 1), string.format("%s: %s (boolean)", field_name, value == 0 and "false" or "true"))
+            tree:add(buf(offset, 1), string.format("%s: %s (bool)", field_name, value == 0 and "false" or "true"))
             return offset + 1
         end
 
-    elseif field_type == 0x20 then -- byte
+    elseif field_type == TYPE_CODE_BYTE then -- int8_t
         if offset < buf:len() then
             local value = buf(offset, 1):int()
-            tree:add(buf(offset, 1), string.format("%s: %d (0x%02X) (byte)", field_name, value, value))
+            tree:add(buf(offset, 1), string.format("%s: %d (0x%02X) (int8_t)", field_name, value, value))
             return offset + 1
         end
 
-    elseif field_type == 0x21 then -- short
+    elseif field_type == TYPE_CODE_SHORT then -- int16_t
         if offset + 1 < buf:len() then
             local value = isbe and buf(offset, 2):int() or buf(offset, 2):le_int()
-            tree:add(buf(offset, 2), string.format("%s: %d (short)", field_name, value))
+            tree:add(buf(offset, 2), string.format("%s: %d (int16_t)", field_name, value))
             return offset + 2
         end
 
-    elseif field_type == 0x22 then -- int
+    elseif field_type == TYPE_CODE_INT then -- int32_t
         if offset + 3 < buf:len() then
             local value = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
-            tree:add(buf(offset, 4), string.format("%s: %d (int)", field_name, value))
+            tree:add(buf(offset, 4), string.format("%s: %d (int32_t)", field_name, value))
             return offset + 4
         end
 
-    elseif field_type == 0x23 then -- long (enhanced timestamp support)
+    elseif field_type == TYPE_CODE_LONG then -- int64_t (enhanced timestamp support)
         if offset + 7 < buf:len() then
             local value = isbe and buf(offset, 8):int64() or buf(offset, 8):le_int64()
             local value_num = tonumber(tostring(value))
@@ -759,28 +780,28 @@ local function parseValue(buf, offset, field_type, isbe, tree, field_name)
             -- Special formatting for timestamp fields
             if field_name:match("time") or field_name:match("Time") or field_name:match("seconds") then
                 local formatted_time = formatEpicsTimestamp(value_num, 0)
-                tree:add(buf(offset, 8), string.format("%s: %s (%s) (long)", field_name, tostring(value), formatted_time))
+                tree:add(buf(offset, 8), string.format("%s: %s (%s) (int64_t)", field_name, tostring(value), formatted_time))
             else
-                tree:add(buf(offset, 8), string.format("%s: %s (long)", field_name, tostring(value)))
+                tree:add(buf(offset, 8), string.format("%s: %s (int64_t)", field_name, tostring(value)))
             end
             return offset + 8
         end
 
-    elseif field_type == 0x2A then -- float
+    elseif field_type == TYPE_CODE_FLOAT then -- float
         if offset + 3 < buf:len() then
             local value = isbe and buf(offset, 4):float() or buf(offset, 4):le_float()
             tree:add(buf(offset, 4), string.format("%s: %.6g (float)", field_name, value))
             return offset + 4
         end
 
-    elseif field_type == 0x2B then -- double
+    elseif field_type == TYPE_CODE_DOUBLE then -- double
         if offset + 7 < buf:len() then
             local value = isbe and buf(offset, 8):float() or buf(offset, 8):le_float()
             tree:add(buf(offset, 8), string.format("%s: %.6g (double)", field_name, value))
             return offset + 8
         end
 
-    elseif field_type == 0x60 then -- string (enhanced)
+    elseif field_type == TYPE_CODE_STRING then -- string (enhanced)
         local str_len, new_offset = readPVASize(buf, offset, isbe)
         if new_offset + str_len <= buf:len() then
             local str_value = str_len > 0 and buf(new_offset, str_len):string() or ""
@@ -795,8 +816,8 @@ local function parseValue(buf, offset, field_type, isbe, tree, field_name)
         end
 
     -- Phase 4: Array type support
-    elseif field_type >= 0x28 and field_type <= 0x2F then -- Array types
-        local element_type = field_type - 0x08 -- Convert to element type
+    elseif field_type >= TYPE_CODE_BYTE_ARRAY and field_type <= TYPE_CODE_ULONG_ARRAY then -- Array types
+        local element_type = field_type - TYPE_CODE_BOOLEAN_ARRAY -- Convert to element type
         local array_len, len_offset = readPVASize(buf, offset, isbe)
 
         if len_offset < buf:len() then
@@ -946,7 +967,7 @@ local function parseFieldInfo(buf, offset, isbe, depth)
 
     local field_info = FieldInfo:new("", field_type)
 
-    if field_type == 0x7F then -- structure
+    if field_type == TYPE_CODE_STRUCT then -- struct
         local field_count, new_offset = readPVASize(buf, offset, isbe)
         offset = new_offset
 
@@ -965,7 +986,7 @@ local function parseFieldInfo(buf, offset, isbe, depth)
             offset = nested_offset
         end
 
-    elseif field_type == 0x80 then -- union
+    elseif field_type == TYPE_CODE_UNION then -- union
         -- Skip union name
         local union_name, name_offset = readPVAString(buf, offset, isbe, nil, nil)
         offset = name_offset
@@ -996,17 +1017,17 @@ end
 
 -- Helper function to get type size (simplified version)
 local function getTypeSize(type_byte)
-    if type_byte == 0x08 then return 1 -- boolean
-    elseif type_byte == 0x20 then return 1 -- byte
-    elseif type_byte == 0x21 then return 2 -- short
-    elseif type_byte == 0x22 then return 4 -- int
-    elseif type_byte == 0x23 then return 8 -- long
-    elseif type_byte == 0x24 then return 1 -- ubyte
-    elseif type_byte == 0x25 then return 2 -- ushort
-    elseif type_byte == 0x26 then return 4 -- uint
-    elseif type_byte == 0x27 then return 8 -- ulong
-    elseif type_byte == 0x2A then return 4 -- float
-    elseif type_byte == 0x2B then return 8 -- double
+    if type_byte == TYPE_CODE_BOOLEAN then return 1 -- bool
+    elseif type_byte == TYPE_CODE_BYTE then return 1 -- int8_t
+    elseif type_byte == TYPE_CODE_SHORT then return 2 -- int16_t
+    elseif type_byte == TYPE_CODE_INT then return 4 -- int32_t
+    elseif type_byte == TYPE_CODE_LONG then return 8 -- int64_t
+    elseif type_byte == TYPE_CODE_UBYTE then return 1 -- uint8_t
+    elseif type_byte == TYPE_CODE_USHORT then return 2 -- uint16_t
+    elseif type_byte == TYPE_CODE_UINT then return 4 -- uint32_t
+    elseif type_byte == TYPE_CODE_ULONG then return 8 -- uint64_t
+    elseif type_byte == TYPE_CODE_FLOAT then return 4 -- float
+    elseif type_byte == TYPE_CODE_DOUBLE then return 8 -- double
     else return 0 -- variable length or unknown
     end
 end
@@ -1581,7 +1602,7 @@ function decodePVData(buf, pkt, t, isbe, label)
     local offset = 1
     local main_field_info = nil
 
-    if first_byte == 0x80 then -- union
+            if first_byte == TYPE_CODE_UNION then -- union
         -- Parse union name
         local union_name, name_offset = readPVAString(buf, offset, isbe, nil, nil)
         offset = name_offset
@@ -1621,7 +1642,7 @@ function decodePVData(buf, pkt, t, isbe, label)
                         offset = offset + 1
 
                         -- Skip any additional type-specific data
-                        if field_type == 0x80 then -- union - skip union name and field count
+                        if field_type == TYPE_CODE_UNION then -- union - skip union name and field count
                             local union_name, union_name_offset = readPVAString(buf, offset, isbe, nil, nil)
                             offset = union_name_offset
                             if offset < buf:len() then
@@ -1638,7 +1659,7 @@ function decodePVData(buf, pkt, t, isbe, label)
                         local type_name = PVD_TYPES[field_type] or string.format("unknown(0x%02X)", field_type)
                         offset = offset + 1
 
-                        if field_type == 0x80 then -- union
+                        if field_type == TYPE_CODE_UNION then -- union
                             -- Read union name
                             local union_name, union_name_offset = readPVAString(buf, offset, isbe, nil, nil)
                             offset = union_name_offset
@@ -1760,7 +1781,7 @@ function decodePVData(buf, pkt, t, isbe, label)
             end
         end
 
-    elseif first_byte == 0x7F then -- structure
+    elseif first_byte == TYPE_CODE_STRUCT then -- struct
         pvd_tree:set_text("Structure")
 
         -- Parse field count and fields
@@ -1788,7 +1809,7 @@ function decodePVData(buf, pkt, t, isbe, label)
             end
         end
 
-        elseif first_byte == 0x01 then -- introspectionOnly - values only
+        elseif first_byte == TYPE_CODE_INTROSPECTION_ONLY then -- introspectionOnly - values only
         pvd_tree:set_text("Values Only")
 
         -- DETAILED DEBUG: Show byte-by-byte parsing
