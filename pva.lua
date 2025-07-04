@@ -1682,6 +1682,84 @@ function decodePVData(buf, pkt, t, isbe, label)
             end
         end
 
+        -- Parse actual values if there are remaining bytes
+        if offset < buf:len() then
+            -- Read discriminator as simple byte (not size-encoded)
+            local discriminator = buf(offset, 1):uint()
+            offset = offset + 1
+
+            if discriminator == 0 and offset < buf:len() then
+                -- Choice 0 = "value" field 
+                -- Check if it's a string or numeric type based on schema
+                local str_len, str_offset = readPVASize(buf, offset, isbe)
+                if str_offset + str_len <= buf:len() and str_len > 0 then
+                    local str_val = buf(str_offset, str_len):string()
+                    pvd_tree:add(buf(offset, str_offset - offset + str_len), string.format("value = \"%s\"", str_val))
+                    offset = str_offset + str_len
+                elseif offset + 3 < buf:len() then
+                    -- Try as numeric
+                    local int_val = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
+                    pvd_tree:add(buf(offset, 4), string.format("value = %d", int_val))
+                    offset = offset + 4
+                end
+
+            elseif discriminator == 1 and offset < buf:len() then
+                -- Choice 1 = "alarm" union
+                local alarm_disc = buf(offset, 1):uint()
+                offset = offset + 1
+
+                if alarm_disc == 0 and offset + 3 < buf:len() then
+                    -- severity
+                    local severity = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
+                    pvd_tree:add(buf(offset, 4), string.format("alarm.severity = %d", severity))
+                    offset = offset + 4
+                elseif alarm_disc == 1 and offset + 3 < buf:len() then
+                    -- status
+                    local status = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
+                    pvd_tree:add(buf(offset, 4), string.format("alarm.status = %d", status))
+                    offset = offset + 4
+                elseif alarm_disc == 2 and offset < buf:len() then
+                    -- message string
+                    local str_len, str_offset = readPVASize(buf, offset, isbe)
+                    if str_offset + str_len <= buf:len() then
+                        local str_val = str_len > 0 and buf(str_offset, str_len):string() or ""
+                        pvd_tree:add(buf(offset, str_offset - offset + str_len), string.format("alarm.message = \"%s\"", str_val))
+                        offset = str_offset + str_len
+                    end
+                end
+
+            elseif discriminator == 2 and offset < buf:len() then
+                -- Choice 2 = "timeStamp" field - parse actual timestamp data  
+                if offset + 3 <= buf:len() then
+                    -- Read 4-byte timestamp (EPICS seconds since 1990)
+                    local epics_seconds = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
+                    local formatted_time = formatEpicsTimestamp(epics_seconds, 0)
+                    pvd_tree:add(buf(offset, 4), string.format("timeStamp = %d (%s)", epics_seconds, formatted_time))
+                    offset = offset + 4
+                    
+                    -- Check for additional timestamp metadata/context
+                    if offset < buf:len() then
+                        local remaining_bytes = buf:len() - offset
+                        if remaining_bytes > 0 then
+                            -- Try to parse as string metadata
+                            local str_len, str_offset = readPVASize(buf, offset, isbe)
+                            if str_offset + str_len <= buf:len() and str_len > 0 and str_len < 50 then
+                                local str_val = buf(str_offset, str_len):string()
+                                pvd_tree:add(buf(offset, str_offset - offset + str_len), string.format("timeStamp.metadata = \"%s\"", str_val))
+                                offset = str_offset + str_len
+                            else
+                                -- Show as raw data
+                                pvd_tree:add(buf(offset, remaining_bytes), string.format("timeStamp.extra_data = %d bytes", remaining_bytes))
+                                offset = buf:len()
+                            end
+                        end
+                    end
+                else
+                    pvd_tree:add(buf(offset), string.format("timeStamp = [insufficient data, %d bytes]", buf:len() - offset))
+                end
+            end
+        end
+
     elseif first_byte == 0x7F then -- structure
         pvd_tree:set_text("Structure")
 
@@ -1710,25 +1788,56 @@ function decodePVData(buf, pkt, t, isbe, label)
             end
         end
 
-    elseif first_byte == 0x01 then -- introspectionOnly - values only
+        elseif first_byte == 0x01 then -- introspectionOnly - values only
         pvd_tree:set_text("Values Only")
+
+        -- DETAILED DEBUG: Show byte-by-byte parsing
+        if offset < buf:len() then
+            local debug_tree = pvd_tree:add(buf(offset), string.format("DEBUG: Parsing from offset %d", offset))
+            
+            -- Show all remaining bytes
+            local all_bytes = ""
+            for i = 0, buf:len() - offset - 1 do
+                all_bytes = all_bytes .. string.format("%02X ", buf(offset + i, 1):uint())
+            end
+            debug_tree:add(buf(offset), "All bytes: " .. all_bytes)
+            
+            -- Show discriminator as simple byte
+            local discriminator = buf(offset, 1):uint()
+            debug_tree:add(buf(offset, 1), string.format("Discriminator byte: %d (0x%02X)", discriminator, discriminator))
+            
+            -- Show next few bytes after discriminator
+            if offset + 1 < buf:len() then
+                local next_bytes = ""
+                local bytes_to_show = math.min(8, buf:len() - offset - 1)
+                for i = 0, bytes_to_show - 1 do
+                    next_bytes = next_bytes .. string.format("%02X ", buf(offset + 1 + i, 1):uint())
+                end
+                if bytes_to_show > 0 then
+                    debug_tree:add(buf(offset + 1, bytes_to_show), "Bytes after discriminator: " .. next_bytes)
+                end
+            end
+        end
 
         -- Parse the value data with clean formatting
         if offset < buf:len() then
-            -- Read discriminator to see which field is active
-            local discriminator, disc_offset = readPVASize(buf, offset, isbe)
-            offset = disc_offset
+            -- Read discriminator as simple byte (not size-encoded)
+            local discriminator = buf(offset, 1):uint()
+            offset = offset + 1
 
-            if discriminator == 0 and offset + 3 < buf:len() then
-                -- Choice 0 = "value" field (int type)
-                local int_val = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
-                pvd_tree:add(buf(offset, 4), string.format("value: %d", int_val))
-                offset = offset + 4
+            if discriminator == 0 and offset < buf:len() then
+                -- Choice 0 = "value" field (string based on schema)
+                local str_len, str_offset = readPVASize(buf, offset, isbe)
+                if str_offset + str_len <= buf:len() then
+                    local str_val = str_len > 0 and buf(str_offset, str_len):string() or ""
+                    pvd_tree:add(buf(offset, str_offset - offset + str_len), string.format("value: \"%s\"", str_val))
+                    offset = str_offset + str_len
+                end
 
             elseif discriminator == 1 and offset < buf:len() then
                 -- Choice 1 = "alarm" union
-                local alarm_disc, alarm_disc_offset = readPVASize(buf, offset, isbe)
-                offset = alarm_disc_offset
+                local alarm_disc = buf(offset, 1):uint()
+                offset = offset + 1
 
                 if alarm_disc == 0 and offset + 3 < buf:len() then
                     -- severity
@@ -1750,17 +1859,40 @@ function decodePVData(buf, pkt, t, isbe, label)
                     end
                 end
 
-            elseif discriminator == 2 and offset + 3 < buf:len() then
-                -- Choice 2 = "timeStamp" field
-                local timestamp_val = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
-                pvd_tree:add(buf(offset, 4), string.format("timeStamp: %d", timestamp_val))
-                offset = offset + 4
+            elseif discriminator == 2 and offset < buf:len() then
+                -- Choice 2 = "timeStamp" field - parse actual timestamp data
+                if offset + 3 <= buf:len() then
+                    -- Read 4-byte timestamp (EPICS seconds since 1990)
+                    local epics_seconds = isbe and buf(offset, 4):int() or buf(offset, 4):le_int()
+                    local formatted_time = formatEpicsTimestamp(epics_seconds, 0)
+                    pvd_tree:add(buf(offset, 4), string.format("timeStamp: %d (%s)", epics_seconds, formatted_time))
+                    offset = offset + 4
+                    
+                    -- Check for additional timestamp metadata/context
+                    if offset < buf:len() then
+                        local remaining_bytes = buf:len() - offset
+                        if remaining_bytes > 0 then
+                            -- Try to parse as string metadata
+                            local str_len, str_offset = readPVASize(buf, offset, isbe)
+                            if str_offset + str_len <= buf:len() and str_len > 0 and str_len < 50 then
+                                local str_val = buf(str_offset, str_len):string()
+                                pvd_tree:add(buf(offset, str_offset - offset + str_len), string.format("timeStamp.metadata: \"%s\"", str_val))
+                                offset = str_offset + str_len
+                            else
+                                -- Show as raw data
+                                pvd_tree:add(buf(offset, remaining_bytes), string.format("timeStamp.extra_data: %d bytes", remaining_bytes))
+                                offset = buf:len()
+                            end
+                        end
+                    end
+                else
+                    pvd_tree:add(buf(offset), string.format("timeStamp: [insufficient data, %d bytes]", buf:len() - offset))
+                end
 
             else
-                -- Unknown discriminator or insufficient data
-                if offset < buf:len() then
-                    pvd_tree:add(buf(offset), string.format("Unknown value data (choice %d)", discriminator))
-                end
+                -- Unknown discriminator
+                pvd_tree:add(buf(offset), string.format("Unknown discriminator %d - showing raw data", discriminator))
+                pvd_tree:add(buf(offset), string.format("Raw data (%d bytes remaining)", buf:len() - offset))
             end
         end
 
