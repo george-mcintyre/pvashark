@@ -225,6 +225,12 @@ The FieldDesc tree describes the structure of data fields. Each node follows thi
 |-------------------|----------|-----|-----|
 | TypeCode: int32_t | `0x04`   |     |     |
 
+**Wireshark Display:**
+```
+└─ PVData Body
+   └─ FieldDesc: int32_t (0x04)
+```
+
 **Simple Structure:**
 
 | Description                        | Protocol | ...                | ... |
@@ -237,6 +243,18 @@ The FieldDesc tree describes the structure of data fields. Each node follows thi
 | Field name (Size=6 + UTF-8 string) |          | `0x0B`             |     |
 | Field type: float64                |          |                    |     |
 
+**Wireshark Display:**
+```
+└─ PVData Body
+   └─ FieldDesc: structure "MyStruct" (0x0D)
+      ├─ Type ID: "MyStruct" (8 bytes)
+      ├─ Field Count: 2
+      ├─ Field: field1
+      │  └─ Type: int32_t (0x04)
+      └─ Field: field2
+         └─ Type: float64 (0x0B)
+```
+
 **Union:**
 
 | Description                         | Protocol | ...                | ... |
@@ -248,6 +266,18 @@ The FieldDesc tree describes the structure of data fields. Each node follows thi
 | Choice type: int32_t                |          | `0x07` `choice2`   |     |
 | Choice name (Size=7 + UTF-8 string) |          | `0x0C`             |     |
 | Choice type: string                 |          |                    |     |
+
+**Wireshark Display:**
+```
+└─ PVData Body
+   └─ FieldDesc: union "MyUnion" (0x0E)
+      ├─ Type ID: "MyUnion" (7 bytes)
+      ├─ Choice Count: 2
+      ├─ Choice: choice1
+      │  └─ Type: int32_t (0x04)
+      └─ Choice: choice2
+         └─ Type: string (0x0C)
+```
 
 **Nested Structure:**
 
@@ -269,6 +299,26 @@ The FieldDesc tree describes the structure of data fields. Each node follows thi
 | Field name (Size=7 + UTF-8 string) |          |                    |                   |
 | Field type: string                 |          |                    |                   |
 
+**Wireshark Display:**
+```
+└─ PVData Body
+   └─ FieldDesc: structure "Container" (0x0D)
+      ├─ Type ID: "Container" (9 bytes)
+      ├─ Field Count: 2
+      ├─ Field: value
+      │  └─ Type: int32_t (0x04)
+      └─ Field: alarm
+         └─ FieldDesc: structure "alarm_t" (0x0D)
+            ├─ Type ID: "alarm_t" (7 bytes)
+            ├─ Field Count: 3
+            ├─ Field: severity
+            │  └─ Type: int32_t (0x04)
+            ├─ Field: status
+            │  └─ Type: int32_t (0x04)
+            └─ Field: message
+               └─ Type: string (0x0C)
+```
+
 **Structure Array:**
 
 | Description                        | Protocol | ...               | ... |
@@ -281,6 +331,19 @@ The FieldDesc tree describes the structure of data fields. Each node follows thi
 | Field type: int32_t                |          | `0x01` `y`        |     |
 | Field name (Size=1 + UTF-8 string) |          | `0x04`            |     |
 | Field type: int32_t                |          |                   |     |
+
+**Wireshark Display:**
+```
+└─ PVData Body
+   └─ FieldDesc: structure[] (0x20)
+      └─ Element Type: structure "Point" (0x0D)
+         ├─ Type ID: "Point" (5 bytes)
+         ├─ Field Count: 2
+         ├─ Field: x
+         │  └─ Type: int32_t (0x04)
+         └─ Field: y
+            └─ Type: int32_t (0x04)
+```
 
 #### 7.2.3 Tree Traversal
 
@@ -368,6 +431,29 @@ A minimal **ChannelGet response** for a PV of type *double* might be:
 | TypeCode: float64                                        | `0x0A`                                                  |     |     |
 | Value: IEEE-754 double 100.2                             | `0x40` `0x59` `0x0C` `0xCC` `0xCC` `0xCC` `0xCC` `0xCD` |     |     |
 
+**Wireshark Display:**
+```
+└─ Process Variable Access Protocol
+   ├─ Magic: 0xCA
+   ├─ Version: 2
+   ├─ Flags: 0x40
+   │  ├─ Direction: server (1)
+   │  ├─ Byte order: LSB (0) 
+   │  └─ Message type: Application (0)
+   ├─ Command: Channel Get (0x0A)
+   ├─ Payload Size: 17
+   ├─ Server Channel ID: 1
+   ├─ Sub-command: 0x00
+   │  ├─ Init: No (0)
+   │  ├─ Destroy: No (0)
+   │  └─ Process: No (0)
+   ├─ Status: OK (0xFF)
+   ├─ BitSet: 0 bytes (no changed bits)
+   └─ PVData Body
+      ├─ FieldDesc: float64 (0x0A)  
+      └─ Value: 100.2 (IEEE-754 double)
+```
+
 The same channel, when monitored, would begin with a `Monitor‑INIT` (type tree identical), then receive periodic **server→client** messages re‑using that tree and only sending a `BitSet` + `value` when the `value` field actually changes.
 
 ### 10.3 ChannelPut Example
@@ -390,6 +476,34 @@ A **ChannelPut request** for an **established channel** where the `Point` struct
 | Point[0].y: IEEE-754 double 12.3123                      | `0x40` `0x28` `0xA0` `0xF5` `0xC2` `0x8F` `0x5C` `0x29` |     |     |
 | Point[1].x: IEEE-754 double -12.523                      | `0xC0` `0x29` `0x0F` `0x5C` `0x28` `0xF5` `0xC2` `0x8F` |     |     |
 | Point[1].y: IEEE-754 double 20.2012                      | `0x40` `0x34` `0x33` `0xD7` `0x0A` `0x3D` `0x70` `0xA4` |     |     |
+
+**Wireshark Display:**
+```
+└─ Process Variable Access Protocol
+   ├─ Magic: 0xCA
+   ├─ Version: 2
+   ├─ Flags: 0x41
+   │  ├─ Direction: client (0)
+   │  ├─ Byte order: LSB (0)
+   │  └─ Message type: Application (0)
+   ├─ Command: Channel Put (0x0B)
+   ├─ Payload Size: 44
+   ├─ Request ID: 2
+   ├─ Server Channel ID: 5
+   ├─ Sub-command: 0x00
+   │  ├─ Init: No (0)
+   │  ├─ Destroy: No (0)
+   │  └─ Process: No (0)
+   ├─ BitSet: 0 bytes (full value update)
+   └─ PVData Body
+      ├─ Array Size: 2 elements
+      ├─ Point[0]
+      │  ├─ x: 3.412 (IEEE-754 double)
+      │  └─ y: 12.3123 (IEEE-754 double)
+      └─ Point[1]
+         ├─ x: -12.523 (IEEE-754 double)
+         └─ y: 20.2012 (IEEE-754 double)
+```
 
 > **Note**: For new channels, the first PUT operation may include a FieldDesc (type definition). Subsequent operations on established channels can omit the type information, as shown above, for improved efficiency.
 
@@ -457,6 +571,36 @@ An NTScalar structure would be encoded as:
 | Field type: int32_t                   |          |                                |                           |
 | Field name (Size=7 + UTF-8 string)    |          |                                |                           |
 | Field type: int32_t                   |          |                                |                           |
+
+**Wireshark Display:**
+```
+└─ PVData Body
+   └─ NT Type: NTScalar
+      ├─ Type ID: "epics:nt/NTScalar:1.0" (22 bytes)
+      ├─ Choice Count: 3
+      ├─ Choice: value
+      │  └─ Type: int32_t (0x04)
+      ├─ Choice: alarm
+      │  └─ FieldDesc: structure "alarm_t" (0x0D)
+      │     ├─ Type ID: "alarm_t" (7 bytes)
+      │     ├─ Field Count: 3
+      │     ├─ Field: severity
+      │     │  └─ Type: int32_t (0x04)
+      │     ├─ Field: status
+      │     │  └─ Type: int32_t (0x04)
+      │     └─ Field: message
+      │        └─ Type: string (0x0C)
+      └─ Choice: timeStamp
+         └─ FieldDesc: structure "time_t" (0x0D)
+            ├─ Type ID: "time_t" (6 bytes)
+            ├─ Field Count: 3
+            ├─ Field: secondsPastEpoch
+            │  └─ Type: int64_t (0x05)
+            ├─ Field: nanoseconds
+            │  └─ Type: int32_t (0x04)
+            └─ Field: userTag
+               └─ Type: int32_t (0x04)
+```
 
 Normative‑type instances declare themselves by sending a `FieldDesc` whose **top‑level ID string** equals the NT name (e.g. `"epics:nt/NTScalar:1.0"`) so that generic GUIs can recognise and render them automatically.
 
