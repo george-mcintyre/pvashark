@@ -199,15 +199,10 @@ No additional payload body follows these 8‑byte headers.
    ├─ Client Queue Size: 16384
    ├─ Client Introspection registry size: 512
    ├─ Client QoS: 0x0000
-   ├─ AuthZ method: "plain"
    ├─ AuthZ Flags: 0x01
-   ├─ AuthZ Elem-cnt: 2
-   ├─ AuthZ Entry 1
-   │  ├─ AuthZ name: "operator"
-   │  └─ AuthZ method: "plain"
-   └─ AuthZ Entry 2
+   └─ AuthZ Entry 1
       ├─ AuthZ account: "controls"
-      └─ AuthZ method: "plain"
+      └─ AuthZ method: "ca"
 ```
 
 **With X.509 (certificate authentication):**
@@ -226,14 +221,11 @@ No additional payload body follows these 8‑byte headers.
    ├─ Client Queue Size: 16384
    ├─ Client Introspection registry size: 512
    ├─ Client QoS: 0x0000
-   ├─ AuthZ method: "x509"
-   ├─ AuthZ host: "client.facility.org"
-   ├─ AuthZ authority: "CA=facility.org"
    ├─ AuthZ Flags: 0x02
-   ├─ AuthZ isTLS: 1
-   ├─ AuthZ Elem-cnt: 1
-   └─ AuthZ Entry 1
-      ├─ AuthZ name: "CN=client.facility.org"
+   ├─ AuthZ Entry 1
+   │  ├─ AuthZ name: "operator"
+   │  └─ AuthZ method: "ca"
+   └─ AuthZ Entry 2
       └─ AuthZ method: "x509"
 ```
 
@@ -253,13 +245,10 @@ No additional payload body follows these 8‑byte headers.
    ├─ Command: Connection Validated (0x09)
    ├─ Payload Size: 28
    ├─ Status: OK (0xFF)
-   ├─ AuthZ method: "plain"
    ├─ AuthZ Flags: 0x01
-   ├─ AuthZ Elem-cnt: 1
    └─ AuthZ Entry 1
-      ├─ AuthZ name: "operator"
-      ├─ AuthZ method: "plain"
-      └─ AuthZ response: "authenticated"
+      ├─ AuthZ name: "anonymous"
+      └─ AuthZ method: "ca"
 ```
 
 **With X.509 (certificate authentication success):**
@@ -310,9 +299,6 @@ No additional payload body follows these 8‑byte headers.
    │  └─ Message type: Application (0)
    ├─ Command: Create Channel (0x07)
    ├─ Payload Size: 35
-   ├─ PV Count: 2
-   ├─ CID: 201
-   ├─ Name: "PV:temperature"
    ├─ CID: 202
    └─ Name: "PV:pressure"
 ```
@@ -374,22 +360,16 @@ sub‑commands are in **byte 0** of payload.  Most channel operations use the fo
    │  ├─ Init: No (0)
    │  ├─ Destroy: No (0)
    │  └─ Process: No (0)
-   └─ PVData Body
-      └─ FieldDesc: union "epics:nt/NTScalar:1.0" (0x0E)
-         ├─ Type ID: "epics:nt/NTScalar:1.0" (22 bytes)
-         ├─ Choice Count: 3
-         ├─ Choice: value
-         │  └─ Type: float64 (0x0B)
-         ├─ Choice: alarm
-         │  └─ FieldDesc: structure "alarm_t" (0x0D)
-         │     ├─ Field: severity → int32_t (0x04)
-         │     ├─ Field: status → int32_t (0x04)
-         │     └─ Field: message → string (0x0C)
-         └─ Choice: timeStamp
-            └─ FieldDesc: structure "time_t" (0x0D)
-               ├─ Field: secondsPastEpoch → int64_t (0x05)
-               ├─ Field: nanoseconds → int32_t (0x04)
-               └─ Field: userTag → int32_t (0x04)
+   └─ value (0x0E: NTScalar)
+      ├─ value (0x0B: float64): 
+      ├─ alarm (0x0D: alarm_t) 
+      │  ├─ severity (0x04: int32_t): 
+      │  ├─ status (0x04: int32_t):  
+      │  └─ message (0x0C: string):  
+      └─ timeStamp (0x0D: time_t) 
+         ├─ secondsPastEpoch (0x05: int64_t): 
+         ├─ nanoseconds: (0x04: int32_t): 
+         └─ userTag (0x04: int32_t): 
 ```
 
 #### 4.4.2 Client GET Simple Scalar Byte
@@ -413,9 +393,7 @@ sub‑commands are in **byte 0** of payload.  Most channel operations use the fo
    │  └─ Process: No (0)
    ├─ Status: OK (0xFF)
    ├─ BitSet: 0 bytes (full value)
-   └─ PVData Body
-      ├─ FieldDesc: uint8_t (0x06)
-      └─ Value: 42 (byte)
+   └─ value (0x06: uint8_t): 42
 ```
 
 #### 4.4.3 Client PUT Simple Scalar Integer
@@ -438,8 +416,7 @@ sub‑commands are in **byte 0** of payload.  Most channel operations use the fo
    │  ├─ Destroy: No (0)
    │  └─ Process: No (0)
    ├─ BitSet: 0 bytes (full value update)
-   └─ PVData Body
-      └─ Value: 1234 (int32_t)
+   └─ value (0x04: int32_t): 1234
 ```
 
 
@@ -532,14 +509,14 @@ The PVXS implementation maps these bytes exactly to the EPICS pvData enumeration
 
 The FieldDesc tree describes the structure of data fields. Each node follows this pattern:
 
-| Field                 | Present When      | Content                             |
-|-----------------------|-------------------|-------------------------------------|
-| **TypeCode**          | Always            | 1 byte indicating the field type    |
-| **Type ID**           | Struct/Union only | String identifier for the type      |
-| **Field Count**       | Struct/Union only | Number of sub-fields (Size-encoded) |
-| **Field Definitions** | Struct/Union only | Repeated: field name + FieldDesc    |
-| **Element Type**      | Array types only  | Single FieldDesc for array elements |
-| ...                   | ...               | ...                                 |
+| # | Field                 | Scalar | Struct/Union | Arrays | Content                             |
+|---|-----------------------|--------|--------------|--------|-------------------------------------|
+| 0 | **TypeCode**          | ✓      | ✓            | ✓      | 1 byte indicating the field type    |
+| 1 | **Type ID**           |        | ✓            |        | String identifier for the type      |
+| 1 | **Element Type**      |        |              | ✓      | Single FieldDesc for array elements |
+| 2 | **Field Count**       |        | ✓            |        | Number of sub-fields (Size-encoded) |
+| 3 | **Field Definitions** |        | ✓            |        | Repeated: field name + FieldDesc    |
+|   | ...                   |        | ...          |        | ...                                 |
 
 **Where:**
 - **TypeCode**: Single byte from the standard type codes (0x00-0x22)
@@ -558,8 +535,7 @@ The FieldDesc tree describes the structure of data fields. Each node follows thi
 
 **Wireshark Display:**
 ```
-└─ PVData Body
-   └─ FieldDesc: int32_t (0x04)
+└─ value (0x04: int32_t)
 ```
 
 **Simple Structure:**
@@ -576,14 +552,9 @@ The FieldDesc tree describes the structure of data fields. Each node follows thi
 
 **Wireshark Display:**
 ```
-└─ PVData Body
-   └─ FieldDesc: structure "MyStruct" (0x0D)
-      ├─ Type ID: "MyStruct" (8 bytes)
-      ├─ Field Count: 2
-      ├─ Field: field1
-      │  └─ Type: int32_t (0x04)
-      └─ Field: field2
-         └─ Type: float64 (0x0B)
+└─ value (0x0D: MyStruct)
+   ├─ field1 (0x04: int32_t):
+   └─ field2 (0x0B: float64):
 ```
 
 **Union:**
@@ -600,54 +571,39 @@ The FieldDesc tree describes the structure of data fields. Each node follows thi
 
 **Wireshark Display:**
 ```
-└─ PVData Body
-   └─ FieldDesc: union "MyUnion" (0x0E)
-      ├─ Type ID: "MyUnion" (7 bytes)
-      ├─ Choice Count: 2
-      ├─ Choice: choice1
-      │  └─ Type: int32_t (0x04)
-      └─ Choice: choice2
-         └─ Type: string (0x0C)
+└─ value (0x0E: MyUnion)
+   ├─ choice1 (0x04: int32_t):
+   └─ choice2 (0x0C: string):
 ```
 
 **Nested Structure:**
 
-| Description                        | Protocol | ...                | ...               |
-|------------------------------------|----------|--------------------|-------------------|
-| TypeCode: structure                | `0x0D`   | `0x09` `Container` |                   |
-| Type ID (Size=9 + UTF-8 string)    |          | `0x02`             |                   |
-| Field count: 2 fields              |          | `0x05` `value`     |                   |
-| Field name (Size=5 + UTF-8 string) |          | `0x04`             |                   |
-| Field type: int32_t                |          | `0x05` `alarm`     |                   |
-| Field name (Size=5 + UTF-8 string) |          | `0x0D`             | `0x07` `alarm_t`  |
-| Field type: structure (nested)     |          |                    | `0x03`            |
-| Type ID (Size=7 + UTF-8 string)    |          |                    | `0x08` `severity` |
-| Field count: 3 fields              |          |                    | `0x04`            |
-| Field name (Size=8 + UTF-8 string) |          |                    | `0x06` `status`   |
-| Field type: int32_t                |          |                    | `0x04`            |
-| Field name (Size=6 + UTF-8 string) |          |                    | `0x07` `message`  |
-| Field type: int32_t                |          |                    | `0x0C`            |
-| Field name (Size=7 + UTF-8 string) |          |                    |                   |
-| Field type: string                 |          |                    |                   |
+| Description                        | Protocol            | ...               | ...               |
+|------------------------------------|---------------------|-------------------|-------------------|
+| TypeCode: structure                | `0x0D`              |                   |                   |
+| Type ID (Size=9 + UTF-8 string)    | `0x09` `Container`  |                   |                   |
+| Field count: 2 fields              |                     | `0x02`            |                   |
+| Field name (Size=5 + UTF-8 string) |                     | `0x05` `value`    |                   |
+| Field type: int32_t                |                     | `0x04`            |                   |
+| Field name (Size=5 + UTF-8 string) |                     | `0x05` `alarm`    |                   |
+| Field type: structure (nested)     |                     | `0x0D`            |                   |
+| Type ID (Size=7 + UTF-8 string)    |                     | `0x07` `alarm_t`  |                   |
+| Field count: 3 fields              |                     |                   | `0x03`            |
+| Field name (Size=8 + UTF-8 string) |                     |                   | `0x08` `severity` |
+| Field type: int32_t                |                     |                   | `0x04`            |
+| Field name (Size=6 + UTF-8 string) |                     |                   | `0x06` `status`   |
+| Field type: int32_t                |                     |                   | `0x04`            |
+| Field name (Size=7 + UTF-8 string) |                     |                   | `0x07` `message`  |
+| Field type: string                 |                     |                   | `0x0C`            |
 
 **Wireshark Display:**
 ```
-└─ PVData Body
-   └─ FieldDesc: structure "Container" (0x0D)
-      ├─ Type ID: "Container" (9 bytes)
-      ├─ Field Count: 2
-      ├─ Field: value
-      │  └─ Type: int32_t (0x04)
-      └─ Field: alarm
-         └─ FieldDesc: structure "alarm_t" (0x0D)
-            ├─ Type ID: "alarm_t" (7 bytes)
-            ├─ Field Count: 3
-            ├─ Field: severity
-            │  └─ Type: int32_t (0x04)
-            ├─ Field: status
-            │  └─ Type: int32_t (0x04)
-            └─ Field: message
-               └─ Type: string (0x0C)
+└─ value (0x0D: Container)
+   ├─ value (0x04: int32_t):
+   └─ alarm (0x0D: alarm_t)
+      ├─ severity (0x04: int32_t):
+      ├─ status (0x04: int32_t):
+      └─ message (0x0C: string):
 ```
 
 **Structure Array:**
@@ -665,15 +621,9 @@ The FieldDesc tree describes the structure of data fields. Each node follows thi
 
 **Wireshark Display:**
 ```
-└─ PVData Body
-   └─ FieldDesc: structure[] (0x20)
-      └─ Element Type: structure "Point" (0x0D)
-         ├─ Type ID: "Point" (5 bytes)
-         ├─ Field Count: 2
-         ├─ Field: x
-         │  └─ Type: int32_t (0x04)
-         └─ Field: y
-            └─ Type: int32_t (0x04)
+└─ value (0x20: Point[])
+   ├─ x (0x04: int32_t):
+   └─ y (0x04: int32_t):
 ```
 
 #### 7.2.3 Tree Traversal
@@ -780,9 +730,7 @@ A minimal **ChannelGet response** for a PV of type *double* might be:
    │  └─ Process: No (0)
    ├─ Status: OK (0xFF)
    ├─ BitSet: 0 bytes (no changed bits)
-   └─ PVData Body
-      ├─ FieldDesc: float64 (0x0A)  
-      └─ Value: 100.2 (IEEE-754 double)
+   └─ value (0x0A: float64): 100.2
 ```
 
 The same channel, when monitored, would begin with a `Monitor‑INIT` (type tree identical), then receive periodic **server→client** messages re‑using that tree and only sending a `BitSet` + `value` when the `value` field actually changes.
@@ -791,22 +739,22 @@ The same channel, when monitored, would begin with a `Monitor‑INIT` (type tree
 
 A **ChannelPut request** for an **established channel** where the `Point` structure array type is already known, with values `[{3.412, 12.3123}, {-12.523, 20.2012}]` would be:
 
-| Description                                              | Protocol                                                | ... | ... |
-|----------------------------------------------------------|---------------------------------------------------------|-----|-----|
-| Magic: Always 0xCA                                       | `0xCA`                                                  |     |     |
-| Version: Protocol version 2                              | `0x02`                                                  |     |     |
-| Flags: client→server, little-endian, application message | `0x41`                                                  |     |     |
-| Command: Channel Put (0x0B)                              | `0x0B`                                                  |     |     |
-| PayloadSize: 44 bytes (little-endian)                    | `0x00` `0x00` `0x00` `0x2C`                             |     |     |
-| RequestID: 2 (little-endian)                             | `0x00` `0x00` `0x00` `0x02`                             |     |     |
-| ChannelID: 5 (little-endian)                             | `0x00` `0x00` `0x00` `0x05`                             |     |     |
-| Sub-command: regular PUT                                 | `0x00`                                                  |     |     |
-| BitSet: 0 bytes (full value update)                      | `0x00`                                                  |     |     |
-| Array size: 2 elements                                   | `0x02`                                                  |     |     |
-| Point[0].x: IEEE-754 double 3.412                        | `0x40` `0x0B` `0x4F` `0xDF` `0x3B` `0x64` `0x5A` `0x1D` |     |     |
-| Point[0].y: IEEE-754 double 12.3123                      | `0x40` `0x28` `0xA0` `0xF5` `0xC2` `0x8F` `0x5C` `0x29` |     |     |
-| Point[1].x: IEEE-754 double -12.523                      | `0xC0` `0x29` `0x0F` `0x5C` `0x28` `0xF5` `0xC2` `0x8F` |     |     |
-| Point[1].y: IEEE-754 double 20.2012                      | `0x40` `0x34` `0x33` `0xD7` `0x0A` `0x3D` `0x70` `0xA4` |     |     |
+| Description                                              | Protocol                    | ...                                                     | ... |
+|----------------------------------------------------------|-----------------------------|---------------------------------------------------------|-----|
+| Magic: Always 0xCA                                       | `0xCA`                      |                                                         |     |
+| Version: Protocol version 2                              | `0x02`                      |                                                         |     |
+| Flags: client→server, little-endian, application message | `0x41`                      |                                                         |     |
+| Command: Channel Put (0x0B)                              | `0x0B`                      |                                                         |     |
+| PayloadSize: 44 bytes (little-endian)                    | `0x00` `0x00` `0x00` `0x2C` |                                                         |     |
+| RequestID: 2 (little-endian)                             | `0x00` `0x00` `0x00` `0x02` |                                                         |     |
+| ChannelID: 5 (little-endian)                             | `0x00` `0x00` `0x00` `0x05` |                                                         |     |
+| Sub-command: regular PUT                                 | `0x00`                      |                                                         |     |
+| BitSet: 0 bytes (full value update)                      | `0x00`                      |                                                         |     |
+| Array size: 2 elements                                   |                             | `0x02`                                                  |     |
+| Point[0].x: IEEE-754 double 3.412                        |                             | `0x40` `0x0B` `0x4F` `0xDF` `0x3B` `0x64` `0x5A` `0x1D` |     |
+| Point[0].y: IEEE-754 double 12.3123                      |                             | `0x40` `0x28` `0xA0` `0xF5` `0xC2` `0x8F` `0x5C` `0x29` |     |
+| Point[1].x: IEEE-754 double -12.523                      |                             | `0xC0` `0x29` `0x0F` `0x5C` `0x28` `0xF5` `0xC2` `0x8F` |     |
+| Point[1].y: IEEE-754 double 20.2012                      |                             | `0x40` `0x34` `0x33` `0xD7` `0x0A` `0x3D` `0x70` `0xA4` |     |
 
 **Wireshark Display:**
 ```
@@ -826,14 +774,13 @@ A **ChannelPut request** for an **established channel** where the `Point` struct
    │  ├─ Destroy: No (0)
    │  └─ Process: No (0)
    ├─ BitSet: 0 bytes (full value update)
-   └─ PVData Body
-      ├─ Array Size: 2 elements
+   └─ value (0x20: Point[]): 2 elements
       ├─ Point[0]
-      │  ├─ x: 3.412 (IEEE-754 double)
-      │  └─ y: 12.3123 (IEEE-754 double)
+      │  ├─ x (0x0B: float64): 3.412
+      │  └─ y (0x0B: float64): 12.3123
       └─ Point[1]
-         ├─ x: -12.523 (IEEE-754 double)
-         └─ y: 20.2012 (IEEE-754 double)
+         ├─ x (0x0B: float64): -12.523
+         └─ y (0x0B: float64): 20.2012
 ```
 
 > **Note**: For new channels, the first PUT operation may include a FieldDesc (type definition). Subsequent operations on established channels can omit the type information, as shown above, for improved efficiency.
@@ -875,62 +822,46 @@ Below are the core NT definitions (all field names *case‑sensitive*).
 
 An NTScalar structure would be encoded as:
 
-| Description                           | Protocol | ...                            | ...                       |
-|---------------------------------------|----------|--------------------------------|---------------------------|
-| TypeCode: union                       | `0x80`   | `0x16` `epics:nt/NTScalar:1.0` |                           |
-| Type ID (Size=22 + UTF-8 string)      |          | `0x03`                         |                           |
-| Union choice count: 3 choices         |          | `0x05` `value`                 |                           |
-| Choice 0 name (Size=5 + UTF-8 string) |          | `0x04`                         |                           |
-| Choice 0 type: int32_t                |          | `0x05` `alarm`                 |                           |
-| Choice 1 name (Size=5 + UTF-8 string) |          | `0x0D`                         | `0x07` `alarm_t`          |
-| Choice 1 type: structure              |          |                                | `0x03`                    |
-| Type ID (Size=7 + UTF-8 string)       |          |                                | `0x08` `severity`         |
-| Field count: 3 fields                 |          |                                | `0x04`                    |
-| Field name (Size=8 + UTF-8 string)    |          |                                | `0x06` `status`           |
-| Field type: int32_t                   |          |                                | `0x04`                    |
-| Field name (Size=6 + UTF-8 string)    |          |                                | `0x07` `message`          |
-| Field type: int32_t                   |          |                                | `0x0C`                    |
-| Field name (Size=7 + UTF-8 string)    |          | `0x09` `timeStamp`             |                           |
-| Field type: string                    |          | `0x0D`                         | `0x06` `time_t`           |
-| Choice 2 name (Size=9 + UTF-8 string) |          |                                | `0x03`                    |
-| Choice 2 type: structure              |          |                                | `0x11` `secondsPastEpoch` |
-| Type ID (Size=6 + UTF-8 string)       |          |                                | `0x05`                    |
-| Field count: 3 fields                 |          |                                | `0x0B` `nanoseconds`      |
-| Field name (Size=17 + UTF-8 string)   |          |                                | `0x04`                    |
-| Field type: int64_t                   |          |                                | `0x07` `userTag`          |
-| Field name (Size=11 + UTF-8 string)   |          |                                | `0x04`                    |
-| Field type: int32_t                   |          |                                |                           |
-| Field name (Size=7 + UTF-8 string)    |          |                                |                           |
-| Field type: int32_t                   |          |                                |                           |
+| Description                           | Protocol                       | ...                | ...                       |
+|---------------------------------------|--------------------------------|--------------------|---------------------------|
+| TypeCode: union                       | `0x0E`                         |                    |                           |
+| Type ID (Size=22 + UTF-8 string)      | `0x16` `epics:nt/NTScalar:1.0` |                    |                           |
+| Union choice count: 3 choices         |                                | `0x03`             |                           |
+| Choice 0 name (Size=5 + UTF-8 string) |                                | `0x05` `value`     |                           |
+| Choice 0 type: int32_t                |                                | `0x04`             |                           |
+| Choice 1 name (Size=5 + UTF-8 string) |                                | `0x05` `alarm`     |                           |
+| Choice 1 type: structure              |                                | `0x0D`             |                           |
+| Choice 1 Type ID:                     |                                | `0x07` `alarm_t`   |                           |
+| Field count: 3 fields                 |                                |                    | `0x03`                    |
+| Field name (Size=8 + UTF-8 string)    |                                |                    | `0x08` `severity`         |
+| Field type: int32_t                   |                                |                    | `0x04`                    |
+| Field name (Size=6 + UTF-8 string)    |                                |                    | `0x06` `status`           |
+| Field type: int32_t                   |                                |                    | `0x04`                    |
+| Field name (Size=7 + UTF-8 string)    |                                |                    | `0x07` `message`          |
+| Field type: string                    |                                |                    | `0x0C`                    |
+| Choice 2 name (Size=9 + UTF-8 string) |                                | `0x09` `timeStamp` |                           |
+| Choice 2 type: structure              |                                | `0x0D`             | `                         |
+| Type ID (Size=6 + UTF-8 string)       |                                | `0x06` `time_t`    |                           |
+| Field count: 3 fields                 |                                |                    | `0x03`                    |
+| Field name (Size=17 + UTF-8 string)   |                                |                    | `0x11` `secondsPastEpoch` |
+| Field type: int64_t                   |                                |                    | `0x05`                    |
+| Field name (Size=11 + UTF-8 string)   |                                |                    | `0x0B` `nanoseconds`      |
+| Field type: int32_t                   |                                |                    | `0x04`                    |
+| Field name (Size=7 + UTF-8 string)    |                                |                    | `0x07` `userTag`          |
+| Field type: int32_t                   |                                |                    | `0x04`                    |
 
 **Wireshark Display:**
 ```
-└─ PVData Body
-   └─ NT Type: NTScalar
-      ├─ Type ID: "epics:nt/NTScalar:1.0" (22 bytes)
-      ├─ Choice Count: 3
-      ├─ Choice: value
-      │  └─ Type: int32_t (0x04)
-      ├─ Choice: alarm
-      │  └─ FieldDesc: structure "alarm_t" (0x0D)
-      │     ├─ Type ID: "alarm_t" (7 bytes)
-      │     ├─ Field Count: 3
-      │     ├─ Field: severity
-      │     │  └─ Type: int32_t (0x04)
-      │     ├─ Field: status
-      │     │  └─ Type: int32_t (0x04)
-      │     └─ Field: message
-      │        └─ Type: string (0x0C)
-      └─ Choice: timeStamp
-         └─ FieldDesc: structure "time_t" (0x0D)
-            ├─ Type ID: "time_t" (6 bytes)
-            ├─ Field Count: 3
-            ├─ Field: secondsPastEpoch
-            │  └─ Type: int64_t (0x05)
-            ├─ Field: nanoseconds
-            │  └─ Type: int32_t (0x04)
-            └─ Field: userTag
-               └─ Type: int32_t (0x04)
+└─ value (0x0E: NTScalar)
+   ├─ value (0x04: int32_t):
+   ├─ alarm (0x0D: alarm_t)
+   │  ├─ severity (0x04: int32_t):
+   │  ├─ status (0x04: int32_t):
+   │  └─ message (0x0C: string):
+   └─ timeStamp (0x0D: time_t)
+      ├─ secondsPastEpoch (0x05: int64_t):
+      ├─ nanoseconds (0x04: int32_t):
+      └─ userTag (0x04: int32_t):
 ```
 
 Normative‑type instances declare themselves by sending a `FieldDesc` whose **top‑level ID string** equals the NT name (e.g. `"epics:nt/NTScalar:1.0"`) so that generic GUIs can recognise and render them automatically.
