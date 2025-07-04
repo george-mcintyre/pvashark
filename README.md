@@ -4,7 +4,7 @@ Wireshark Lua script plugin packet disector for PV Access protocol
 
 Builds on work by mdagidaver in https://github.com/mdavidsaver/cashark
 
-This repo extends support to all PVAccess, PVData, and NT Data.
+This repo extends support to all PVData, and Normative Data Types.
 
 # EPICS PVAccess — Wire Protocol Specification
 
@@ -91,9 +91,8 @@ No additional payload body follows these 8‑byte headers.
 | `0F` | C→S       | **Destroy Request** | serverCID, requestID                                     |
 | `15` | C→S       | **Cancel Request**  | serverCID, requestID                                     |
 
-### 4.4 Channel Operations (sub‑commands in **byte 0** of payload)
-
-|  Cmd | Purpose                        | Sub‑command `0x08` = INIT, `0x00` = exec, `0x10` = DESTROY                                |
+### 4.4 Channel Operations 
+|  Cmd | Purpose                        | Description                                                                               |
 |-----:|--------------------------------|-------------------------------------------------------------------------------------------|
 | `02` | **Echo** (app‑layer)           | Raw user bytes echoed back by peer                                                        |
 | `0A` | **Channel Get**                | INIT → type info, exec → ChangedBitSet + data                                             |
@@ -106,6 +105,11 @@ No additional payload body follows these 8‑byte headers.
 | `12` | **Message** (server notices)   | {requestID, severity, string}                                                             |
 | `13` | **Multiple Data** (deprecated) | Not emitted by PVXS                                                                       |
 | `14` | **RPC**                        | INIT then {args → results}                                                                |
+
+sub‑commands are in **byte 0** of payload.  Most channel operations use the following sub-commands: 
+- `0x08`: INIT
+- `0x00`: EXEC 
+- `0x10`: DESTROY
 
 
 ---
@@ -351,7 +355,7 @@ Bit numbering matches the depth‑first order of the `FieldDesc` tree.
 A minimal **ChannelGet response** for a PV of type *double* might be:
 
 | Description                                              | Protocol                                                | ... | ... |
-|----------------------------------------------------------|-----------------------------------------------------|-----|-----|
+|----------------------------------------------------------|---------------------------------------------------------|-----|-----|
 | Magic: Always 0xCA                                       | `0xCA`                                                  |     |     |
 | Version: Protocol version 2                              | `0x02`                                                  |     |     |
 | Flags: server→client, little-endian, application message | `0x40`                                                  |     |     |
@@ -371,7 +375,7 @@ The same channel, when monitored, would begin with a `Monitor‑INIT` (type tree
 A **ChannelPut request** for an **established channel** where the `Point` structure array type is already known, with values `[{3.412, 12.3123}, {-12.523, 20.2012}]` would be:
 
 | Description                                              | Protocol                                                | ... | ... |
-|----------------------------------------------------------|-----------------------------------------------------|-----|-----|
+|----------------------------------------------------------|---------------------------------------------------------|-----|-----|
 | Magic: Always 0xCA                                       | `0xCA`                                                  |     |     |
 | Version: Protocol version 2                              | `0x02`                                                  |     |     |
 | Flags: client→server, little-endian, application message | `0x41`                                                  |     |     |
@@ -466,16 +470,7 @@ Normative‑type instances declare themselves by sending a `FieldDesc` whose **t
 
 ## 12. Array Support
 
-Arrays are fundamental to PVA protocol design. From EPICS command-line tools documentation:
-
-```bash
-# Array access examples that prove arrays are core protocol features
-pvget PVRdoubleArray                    # Gets full array
-pvget -r "value[array=2:6]" PVRdoubleArray    # Array slice
-pvput PVRdoubleArray '[1,2,3,4,5]'     # Array assignment
-```
-
-All basic types can be arrays:
+Arrays are fundamental to PVA protocol design. All basic types can be arrays:
 - `byte[]`, `int[]`, `double[]`, `string[]`, etc.
 - Arrays include Size information
 - Arrays are encoded as Size (#elements) + packed elements
