@@ -44,7 +44,7 @@ local bctrlcommands = {
     [2] = "SET_BYTE_ORDER",
 }
 
--- statys codes
+-- status codes
 local stscodes = {
     [0xff] = "OK",
     [0] = "OK",
@@ -53,178 +53,208 @@ local stscodes = {
     [3] = "Fatal Error",
 }
 
--- PVXS TypeCodes (from src/pvxs/data.h)
-local TYPE_CODE_BOOLEAN = 0x00;
+----------------------------------------------
+-- Simple TypeCodes
+----------------------------------------------
 
-local TYPE_CODE_BYTE = 0x20;
-local TYPE_CODE_SHORT = 0x21;
-local TYPE_CODE_INT = 0x22;
-local TYPE_CODE_LONG = 0x23;
+local TYPE_CODE_BOOLEAN                 = 0x00;
 
-local TYPE_CODE_UBYTE = 0x24;
-local TYPE_CODE_USHORT = 0x25;
-local TYPE_CODE_UINT = 0x26;
-local TYPE_CODE_ULONG = 0x27;
+local TYPE_CODE_BYTE                    = 0x20;
+local TYPE_CODE_SHORT                   = 0x21;
+local TYPE_CODE_INT                     = 0x22;
+local TYPE_CODE_LONG                    = 0x23;
 
-local TYPE_CODE_FLOAT = 0x42;
-local TYPE_CODE_DOUBLE = 0x43;
+local TYPE_CODE_UBYTE                   = 0x24;
+local TYPE_CODE_USHORT                  = 0x25;
+local TYPE_CODE_UINT                    = 0x26;
+local TYPE_CODE_ULONG                   = 0x27;
 
-local TYPE_CODE_STRING = 0x60;
+local TYPE_CODE_FLOAT                   = 0x42;
+local TYPE_CODE_DOUBLE                  = 0x43;
 
-local TYPE_CODE_STRUCT = 0x80;
-local TYPE_CODE_UNION = 0x81;
-local TYPE_CODE_ANY = 0x82;
+local TYPE_CODE_STRING                  = 0x60;
 
+local TYPE_CODE_STRUCT                  = 0x80;
+local TYPE_CODE_UNION                   = 0x81;
+local TYPE_CODE_ANY                     = 0x82;
+
+----------------------------------------------
 -- Array TypeCodes
-local TYPE_CODE_BOOLEAN_ARRAY = 0x08;
+----------------------------------------------
 
-local TYPE_CODE_BYTE_ARRAY = 0x28;
-local TYPE_CODE_SHORT_ARRAY = 0x29;
-local TYPE_CODE_INT_ARRAY = 0x2A;
-local TYPE_CODE_LONG_ARRAY = 0x2B;
+local TYPE_CODE_BOOLEAN_ARRAY           = 0x08;
 
-local TYPE_CODE_UBYTE_ARRAY = 0x2C;
-local TYPE_CODE_USHORT_ARRAY = 0x2D;
-local TYPE_CODE_UINT_ARRAY = 0x2E;
-local TYPE_CODE_ULONG_ARRAY = 0x2F;
+local TYPE_CODE_BYTE_ARRAY              = 0x28;
+local TYPE_CODE_SHORT_ARRAY             = 0x29;
+local TYPE_CODE_INT_ARRAY               = 0x2A;
+local TYPE_CODE_LONG_ARRAY              = 0x2B;
 
-local TYPE_CODE_FLOAT_ARRAY = 0x4A;
-local TYPE_CODE_DOUBLE_ARRAY = 0x4B;
+local TYPE_CODE_UBYTE_ARRAY             = 0x2C;
+local TYPE_CODE_USHORT_ARRAY            = 0x2D;
+local TYPE_CODE_UINT_ARRAY              = 0x2E;
+local TYPE_CODE_ULONG_ARRAY             = 0x2F;
 
-local TYPE_CODE_STRING_ARRAY = 0x68;
+local TYPE_CODE_FLOAT_ARRAY             = 0x4A;
+local TYPE_CODE_DOUBLE_ARRAY            = 0x4B;
 
-local TYPE_CODE_STRUCT_ARRAY = 0x88;
-local TYPE_CODE_UNION_ARRAY = 0x89;
-local TYPE_CODE_ANY_ARRAY = 0x8A;
+local TYPE_CODE_STRING_ARRAY            = 0x68;
 
+local TYPE_CODE_STRUCT_ARRAY            = 0x88;
+local TYPE_CODE_UNION_ARRAY             = 0x89;
+local TYPE_CODE_ANY_ARRAY               = 0x8A;
+
+----------------------------------------------
 -- Cache and special codes
-local CACHE_STORE_CODE = 0xFD;
-local CACHE_FETCH_CODE = 0xFE;
-local TYPE_CODE_NULL = 0xFF;
+----------------------------------------------
+
+local CACHE_STORE_CODE                  = 0xFD;
+local CACHE_FETCH_CODE                  = 0xFE;
+local TYPE_CODE_NULL                    = 0xFF;
 
 -- Legacy codes (not in PVXS specification)
-local TYPE_CODE_INTROSPECTION_ONLY = 0x01;
+local TYPE_CODE_INTROSPECTION_ONLY      = 0x01;
 
+----------------------------------------------
 -- TypeCode to name mapping table
+----------------------------------------------
+
 local PVD_TYPES = {
-    [TYPE_CODE_BOOLEAN] = "bool",
-    [TYPE_CODE_BYTE] = "int8_t",
-    [TYPE_CODE_SHORT] = "int16_t",
-    [TYPE_CODE_INT] = "int32_t",
-    [TYPE_CODE_LONG] = "int64_t",
-    [TYPE_CODE_UBYTE] = "uint8_t",
-    [TYPE_CODE_USHORT] = "uint16_t",
-    [TYPE_CODE_UINT] = "uint32_t",
-    [TYPE_CODE_ULONG] = "uint64_t",
-    [TYPE_CODE_FLOAT] = "float",
-    [TYPE_CODE_DOUBLE] = "double",
-    [TYPE_CODE_STRING] = "string",
-    [TYPE_CODE_STRUCT] = "struct",
-    [TYPE_CODE_UNION] = "union",
-    [TYPE_CODE_ANY] = "any",
+    --
+    [TYPE_CODE_BOOLEAN]                 = "bool",
+    [TYPE_CODE_BYTE]                    = "int8_t",
+    [TYPE_CODE_SHORT]                   = "int16_t",
+    [TYPE_CODE_INT]                     = "int32_t",
+    [TYPE_CODE_LONG]                    = "int64_t",
+    [TYPE_CODE_UBYTE]                   = "uint8_t",
+    [TYPE_CODE_USHORT]                  = "uint16_t",
+    [TYPE_CODE_UINT]                    = "uint32_t",
+    [TYPE_CODE_ULONG]                   = "uint64_t",
+    [TYPE_CODE_FLOAT]                   = "float",
+    [TYPE_CODE_DOUBLE]                  = "double",
+    [TYPE_CODE_STRING]                  = "string",
+    [TYPE_CODE_STRUCT]                  = "struct",
+    [TYPE_CODE_UNION]                   = "union",
+    [TYPE_CODE_ANY]                     = "any",
 
     -- Array types
-    [TYPE_CODE_BOOLEAN_ARRAY] = "bool[]",
-    [TYPE_CODE_BYTE_ARRAY] = "int8_t[]",
-    [TYPE_CODE_SHORT_ARRAY] = "int16_t[]",
-    [TYPE_CODE_INT_ARRAY] = "int32_t[]",
-    [TYPE_CODE_LONG_ARRAY] = "int64_t[]",
-    [TYPE_CODE_UBYTE_ARRAY] = "uint8_t[]",
-    [TYPE_CODE_USHORT_ARRAY] = "uint16_t[]",
-    [TYPE_CODE_UINT_ARRAY] = "uint32_t[]",
-    [TYPE_CODE_ULONG_ARRAY] = "uint64_t[]",
-    [TYPE_CODE_FLOAT_ARRAY] = "float[]",
-    [TYPE_CODE_DOUBLE_ARRAY] = "double[]",
-    [TYPE_CODE_STRING_ARRAY] = "string[]",
-    [TYPE_CODE_STRUCT_ARRAY] = "struct[]",
-    [TYPE_CODE_UNION_ARRAY] = "union[]",
-    [TYPE_CODE_ANY_ARRAY] = "any[]",
+    [TYPE_CODE_BOOLEAN_ARRAY]           = "bool[]",
+    [TYPE_CODE_BYTE_ARRAY]              = "int8_t[]",
+    [TYPE_CODE_SHORT_ARRAY]             = "int16_t[]",
+    [TYPE_CODE_INT_ARRAY]               = "int32_t[]",
+    [TYPE_CODE_LONG_ARRAY]              = "int64_t[]",
+    [TYPE_CODE_UBYTE_ARRAY]             = "uint8_t[]",
+    [TYPE_CODE_USHORT_ARRAY]            = "uint16_t[]",
+    [TYPE_CODE_UINT_ARRAY]              = "uint32_t[]",
+    [TYPE_CODE_ULONG_ARRAY]             = "uint64_t[]",
+    [TYPE_CODE_FLOAT_ARRAY]             = "float[]",
+    [TYPE_CODE_DOUBLE_ARRAY]            = "double[]",
+    [TYPE_CODE_STRING_ARRAY]            = "string[]",
+    [TYPE_CODE_STRUCT_ARRAY]            = "struct[]",
+    [TYPE_CODE_UNION_ARRAY]             = "union[]",
+    [TYPE_CODE_ANY_ARRAY]               = "any[]",
 
     -- Special/cache codes
-    [CACHE_STORE_CODE] = "cache_store",
-    [CACHE_FETCH_CODE] = "cache_fetch",
-    [TYPE_CODE_NULL] = "null",
-    [TYPE_CODE_INTROSPECTION_ONLY] = "introspectionOnly"
+    [CACHE_STORE_CODE]                  = "cache_store",
+    [CACHE_FETCH_CODE]                  = "cache_fetch",
+    [TYPE_CODE_NULL]                    = "null",
+
+    [TYPE_CODE_INTROSPECTION_ONLY]      = "introspectionOnly"
 }
 
-local placeholder= ProtoField.bytes("pva.placeholder", " ")
+----------------------------------------------
+-- ProtoFields
+----------------------------------------------
 
-local fmagic= ProtoField.uint8("pva.magic", "Magic", base.HEX)
-local fver  = ProtoField.uint8("pva.version", "Version", base.DEC)
-local fflags= ProtoField.uint8("pva.flags", "Flags", base.HEX)
-local fflag_dir = ProtoField.uint8("pva.direction", "Direction", base.HEX, {[0]="client",[1]="server"}, 0x40)
-local fflag_end = ProtoField.uint8("pva.endian", "Byte order", base.HEX, {[0]="LSB",[1]="MSB"}, 0x80)
-local fflag_msgtype = ProtoField.uint8("pva.msg_type", "Message type", base.HEX, {[0]="Application",[1]="Control"}, 0x01)
-local fflag_segmented = ProtoField.uint8("pva.segmented", "Segmented", base.HEX, {[0]="Not segmented",[1]="First segment",[2]="Last segment",[3]="In-the-middle segment"}, 0x30)
-local fcmd  = ProtoField.uint8("pva.command", "Command", base.HEX, bcommands)
-local fctrlcmd  = ProtoField.uint8("pva.ctrlcommand", "Control Command", base.HEX, bctrlcommands)
-local fctrldata  = ProtoField.uint32("pva.ctrldata", "Control Data", base.HEX)
-local fsize = ProtoField.uint32("pva.size", "Size", base.DEC)
-local fbody = ProtoField.bytes("pva.body", "Body")
-local fpvd = ProtoField.bytes("pva.pvd", "PVData Body")
-local fguid = ProtoField.bytes("pva.guid", "GUID")
+local placeholder   = ProtoField.bytes("pva.placeholder", " ")
 
+----------------------------------------------
+-- Magic, Version, Flags, Command, Control Command, Control Data, Size, Body, PVData, GUID
+----------------------------------------------
+
+local fmagic        = ProtoField.uint8(     "pva.magic",        "Magic",            base.HEX)
+local fver          = ProtoField.uint8(     "pva.version",      "Version",          base.DEC)
+local fflags        = ProtoField.uint8(     "pva.flags",        "Flags",            base.HEX)
+local fflag_dir     = ProtoField.uint8(     "pva.direction",    "Direction",        base.HEX, {[0]="client",[1]="server"}, 0x40)
+local fflag_end     = ProtoField.uint8(     "pva.endian",       "Byte order",       base.HEX, {[0]="LSB",[1]="MSB"}, 0x80)
+local fflag_msgtype = ProtoField.uint8(     "pva.msg_type",     "Message type",     base.HEX, {[0]="Application",[1]="Control"}, 0x01)
+local fflag_segmented = ProtoField.uint8(   "pva.segmented",    "Segmented",        base.HEX, {[0]="Not segmented",[1]="First segment",[2]="Last segment",[3]="In-the-middle segment"}, 0x30) -- TODO: add more types
+local fcmd          = ProtoField.uint8(     "pva.command",      "Command",          base.HEX, bcommands)
+local fctrlcmd      = ProtoField.uint8(     "pva.ctrlcommand",  "Control Command",  base.HEX, bctrlcommands)
+local fctrldata     = ProtoField.uint32(    "pva.ctrldata",     "Control Data",     base.HEX)
+local fsize         = ProtoField.uint32(    "pva.size",         "Size",             base.DEC)
+local fbody         = ProtoField.bytes(     "pva.body",         "Body")
+local fpvd          = ProtoField.bytes(     "pva.pvd",          "PVData Body")
+local fguid         = ProtoField.bytes(     "pva.guid",         "GUID")
+
+----------------------------------------------
 -- PVData Fields
-local fpvd_struct = ProtoField.bytes("pva.pvd_struct", "PVStructure")
-local fpvd_field = ProtoField.bytes("pva.pvd_field", "Field")
-local fpvd_field_name = ProtoField.string("pva.pvd_field_name", "Field Name")
-local fpvd_type = ProtoField.uint8("pva.pvd_type", "Type", base.HEX)
-local fpvd_value = ProtoField.bytes("pva.pvd_value", "Value")
+----------------------------------------------
+
+local fpvd_struct   = ProtoField.bytes(     "pva.pvd_struct",   "PVStructure")
+local fpvd_field    = ProtoField.bytes(     "pva.pvd_field",    "Field")
+local fpvd_field_name = ProtoField.string(  "pva.pvd_field_name", "Field Name")
+local fpvd_type     = ProtoField.uint8(     "pva.pvd_type",     "Type",             base.HEX)
+local fpvd_value    = ProtoField.bytes(     "pva.pvd_value",    "Value")
 local fpvd_introspection = ProtoField.bytes("pva.pvd_introspection", "Introspection Data")
-local fpvd_debug = ProtoField.bytes("pva.pvd_debug", "Debug Info")
+local fpvd_debug    = ProtoField.bytes(     "pva.pvd_debug",    "Debug Info")
 
--- common
-local fcid = ProtoField.uint32("pva.cid", "Client Channel ID")
-local fsid = ProtoField.uint32("pva.sid", "Server Channel ID")
-local fioid = ProtoField.uint32("pva.ioid", "Operation ID")
-local fsubcmd = ProtoField.uint8("pva.subcmd", "Sub-command", base.HEX)
-local fsubcmd_proc = ProtoField.uint8("pva.process", "Process", base.HEX, {[0]="",[1]="Yes"}, 0x04)
-local fsubcmd_init = ProtoField.uint8("pva.init",    "Init   ", base.HEX, {[0]="",[1]="Yes"}, 0x08)
-local fsubcmd_dstr = ProtoField.uint8("pva.destroy", "Destroy", base.HEX, {[0]="",[1]="Yes"}, 0x10)
-local fsubcmd_get  = ProtoField.uint8("pva.get",     "Get    ", base.HEX, {[0]="",[1]="Yes"}, 0x40)
-local fsubcmd_gtpt = ProtoField.uint8("pva.getput",  "GetPut ", base.HEX, {[0]="",[1]="Yes"}, 0x80)
-local fstatus = ProtoField.uint8("pva.status", "Status", base.HEX, stscodes)
+----------------------------------------------
+-- Common Fields
+----------------------------------------------
 
--- For BEACON
+local fcid          = ProtoField.uint32(    "pva.cid",          "Client Channel ID")
+local fsid          = ProtoField.uint32(    "pva.sid",          "Server Channel ID")
+local fioid         = ProtoField.uint32(    "pva.ioid",         "Operation ID")
+local fsubcmd       = ProtoField.uint8(     "pva.subcmd",       "Sub-command",      base.HEX)
+local fsubcmd_proc  = ProtoField.uint8(     "pva.process",      "Process",          base.HEX, {[0]="",[1]="Yes"}, 0x04)
+local fsubcmd_init  = ProtoField.uint8(     "pva.init",         "Init   ",          base.HEX, {[0]="",[1]="Yes"}, 0x08)
+local fsubcmd_dstr  = ProtoField.uint8(     "pva.destroy",      "Destroy",          base.HEX, {[0]="",[1]="Yes"}, 0x10)
+local fsubcmd_get   = ProtoField.uint8(     "pva.get",          "Get    ",          base.HEX, {[0]="",[1]="Yes"}, 0x40)
+local fsubcmd_gtpt  = ProtoField.uint8(     "pva.getput",       "GetPut ",          base.HEX, {[0]="",[1]="Yes"}, 0x80)
+local fstatus       = ProtoField.uint8(     "pva.status",       "Status",           base.HEX, stscodes)
+
+----------------------------------------------
+-- BEACON
+----------------------------------------------
 
 local fbeacon_seq = ProtoField.uint8("pva.bseq", "Beacon sequence#")
 local fbeacon_change = ProtoField.uint16("pva.change", "Beacon change count")
 
 -- For CONNECTION_VALIDATION
 
-local fvalid_bsize = ProtoField.uint32("pva.qsize", "Client Queue Size")
-local fvalid_isize = ProtoField.uint16("pva.isize", "Client Introspection registery size")
-local fvalid_qos = ProtoField.uint16("pva.qos", "Client QoS", base.HEX)
-local fvalid_method = ProtoField.string("pva.method", "AuthZ method")
-local fvalid_azflg  = ProtoField.uint8 ("pva.authzflag","AuthZ Flags",  base.HEX)
-local fvalid_azcnt  = ProtoField.uint8 ("pva.authzcnt", "AuthZ Elem‑cnt",base.DEC)
+local fvalid_bsize  = ProtoField.uint32(    "pva.qsize",        "Client Queue Size")
+local fvalid_isize  = ProtoField.uint16(    "pva.isize",        "Client Introspection registery size")
+local fvalid_qos    = ProtoField.uint16(    "pva.qos",          "Client QoS",   base.HEX)
+local fvalid_method = ProtoField.string(    "pva.method",       "AuthZ method")
+local fvalid_azflg  = ProtoField.uint8 (    "pva.authzflag",    "AuthZ Flags",  base.HEX)
+local fvalid_azcnt  = ProtoField.uint8 (    "pva.authzcnt",     "AuthZ Elem‑cnt", base.DEC)
 
 -- For AUTHZ_REQUEST
 
-local fauthz_request = ProtoField.string("pva.authzrequest", "AuthZ request")
-local fvalid_host = ProtoField.string("pva.host", "AuthZ host")
-local fvalid_authority = ProtoField.string("pva.authority", "AuthZ authority")
-local fvalid_user = ProtoField.string("pva.user", "AuthZ name")
-local fvalid_account = ProtoField.string("pva.account", "AuthZ account")
-local fvalid_isTLS = ProtoField.uint8("pva.isTLS", "AuthZ isTLS")
+local fauthz_request = ProtoField.string(   "pva.authzrequest", "AuthZ request")
+local fvalid_host   = ProtoField.string(    "pva.host",         "AuthZ host")
+local fvalid_authority = ProtoField.string( "pva.authority",    "AuthZ authority")
+local fvalid_user   = ProtoField.string(    "pva.user",         "AuthZ name")
+local fvalid_account = ProtoField.string(   "pva.account",      "AuthZ account")
+local fvalid_isTLS  = ProtoField.uint8(     "pva.isTLS",        "AuthZ isTLS")
 
 -- For AUTHZ_RESPONSE
 
-local fauthz_response = ProtoField.string("pva.authzresponse", "AuthZ response")
+local fauthz_response = ProtoField.string("pva.authzresponse",  "AuthZ response")
 
 -- For AuthZ Entry Array (removed fauth_entry_index as no longer needed)
 
 -- For SEARCH
-local fsearch_seq = ProtoField.uint32("pva.seq", "Search Sequence #")
-local fsearch_addr = ProtoField.bytes("pva.addr", "Address")
-local fsearch_port = ProtoField.uint16("pva.port", "Port")
-local fsearch_mask = ProtoField.uint8("pva.mask", "Mask", base.HEX)
-local fsearch_mask_repl  = ProtoField.uint8("pva.reply", "Reply", base.HEX, {[0]="Optional",[1]="Required"}, 0x01)
-local fsearch_mask_bcast = ProtoField.uint8("pva.ucast", "Reply", base.HEX, {[0]="Broadcast",[1]="Unicast"}, 0x80)
-local fsearch_proto = ProtoField.string("pva.proto", "Transport Protocol")
-local fsearch_count = ProtoField.uint16("pva.count", "PV Count")
-local fsearch_cid = ProtoField.uint32("pva.cid", "CID")
-local fsearch_name = ProtoField.string("pva.pv", "Name")
+local fsearch_seq   = ProtoField.uint32(    "pva.seq",          "Search Sequence #")
+local fsearch_addr  = ProtoField.bytes(     "pva.addr",          "Address")
+local fsearch_port  = ProtoField.uint16(    "pva.port",         "Port")
+local fsearch_mask  = ProtoField.uint8(     "pva.mask",         "Mask",         base.HEX)
+local fsearch_mask_repl  = ProtoField.uint8("pva.reply",        "Reply",        base.HEX, {[0]="Optional",[1]="Required"}, 0x01)
+local fsearch_mask_bcast = ProtoField.uint8("pva.ucast",        "Reply",        base.HEX, {[0]="Broadcast",[1]="Unicast"}, 0x80)
+local fsearch_proto = ProtoField.string(    "pva.proto",        "Transport Protocol")
+local fsearch_count = ProtoField.uint16(    "pva.count",        "PV Count")
+local fsearch_cid   = ProtoField.uint32(    "pva.cid",          "CID")
+local fsearch_name  = ProtoField.string(    "pva.pv",           "Name")
 
 -- For SEARCH_RESPONSE
 local fsearch_found = ProtoField.bool("pva.found", "Found")
