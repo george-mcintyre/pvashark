@@ -589,8 +589,10 @@ local function parsePVField(buf, offset, isbe, tree, depth)
         if offset < buf:len() then
             -- Read 16-bit cache key
             local cache_key = isbe and buf(offset, 2):uint() or buf(offset, 2):le_uint()
-            field_tree:set_text(string.format("Cache Store %d", cache_key))
             offset = offset + 2
+            
+            -- Use simplified cache store format
+            field_tree:set_text(string.format("cache_%d (0x%02X: struct)", cache_key, TYPE_CODE_STRUCT))
             
             -- Parse the following FieldDesc tree
             if offset < buf:len() then
@@ -733,8 +735,10 @@ local function parseField(buf, offset, isbe, tree, depth)
         if offset < buf:len() then
             -- Read 16-bit cache key
             local cache_key = isbe and buf(offset, 2):uint() or buf(offset, 2):le_uint()
-            if field_tree then field_tree:set_text(string.format("Cache Store %d", cache_key)) end
             offset = offset + 2
+            
+            -- Use simplified cache store format
+            if field_tree then field_tree:set_text(string.format("cache_%d (0x%02X: struct)", cache_key, TYPE_CODE_STRUCT)) end
             
             -- Parse the following FieldDesc tree
             if offset < buf:len() then
@@ -1734,9 +1738,19 @@ function decodePVData(buf, pkt, t, isbe, label)
                         
                         -- Read Type ID string
                         local type_id, type_id_offset = readPVString(buf, offset, isbe)
+                        local nt_type = "struct"
                         if type_id and type_id ~= "" then
-                            pvd_tree:add(buf(offset, type_id_offset - offset), string.format("Type ID: \"%s\"", type_id))
+                            -- Use detectNTType to get clean name
+                            local nt_name, nt_info = detectNTType(type_id)
+                            if nt_name and nt_name ~= "Unknown" and nt_name ~= "Custom NT" then
+                                nt_type = nt_name
+                            else
+                                -- For other types like alarm_t, use the base name
+                                nt_type = type_id:match("([^:]+)") or type_id
+                            end
                         end
+                        -- Update the cache store name to use field format
+                        pvd_tree:set_text(string.format("value (0x%02X: %s)", TYPE_CODE_STRUCT, nt_type))
                         offset = type_id_offset
                         
                         -- Read field count
@@ -1764,19 +1778,30 @@ function decodePVData(buf, pkt, t, isbe, label)
                                     offset = offset + 1  -- Skip 0xFD
                                                                          if offset + 1 < buf:len() then
                                          local nested_cache_key = isbe and buf(offset, 2):uint() or buf(offset, 2):le_uint()
-                                         local cache_tree = pvd_tree:add(buf(offset - 1, 3), string.format("Cache Store %d", nested_cache_key))
+                                         -- We'll update the cache_tree text after we know the type
+                                         local cache_tree = pvd_tree:add(buf(offset - 1, 3), string.format("TempCache %d", nested_cache_key))
                                          offset = offset + 2
                                         
                                         -- Parse the nested structure
                                         if offset < buf:len() and buf(offset, 1):uint() == TYPE_CODE_STRUCT then
                                             offset = offset + 1  -- Skip 0x80
                                             
-                                            -- Read nested Type ID
-                                            local nested_type_id, nested_type_offset = readPVString(buf, offset, isbe)
-                                            if nested_type_id and nested_type_id ~= "" then
-                                                cache_tree:add(buf(offset, nested_type_offset - offset), string.format("Type ID: \"%s\"", nested_type_id))
-                                            end
-                                            offset = nested_type_offset
+                                                                                         -- Read nested Type ID
+                                             local nested_type_id, nested_type_offset = readPVString(buf, offset, isbe)
+                                             local nested_nt_type = "struct"
+                                             if nested_type_id and nested_type_id ~= "" then
+                                                 -- Use detectNTType to get clean name
+                                                 local nested_nt_name, nested_nt_info = detectNTType(nested_type_id)
+                                                 if nested_nt_name and nested_nt_name ~= "Unknown" and nested_nt_name ~= "Custom NT" then
+                                                     nested_nt_type = nested_nt_name
+                                                 else
+                                                     -- For other types like alarm_t, use the base name
+                                                     nested_nt_type = nested_type_id:match("([^:]+)") or nested_type_id
+                                                 end
+                                             end
+                                             -- Update the nested cache store name to use field format with actual field name
+                                             cache_tree:set_text(string.format("%s (0x%02X: %s)", field_name or "field", TYPE_CODE_STRUCT, nested_nt_type))
+                                             offset = nested_type_offset
                                             
                                             -- Read nested field count
                                             local nested_field_count, nested_count_offset = readPVSize(buf, offset, isbe)
