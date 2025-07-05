@@ -735,11 +735,9 @@ local function parseField(buf, offset, isbe, tree, depth)
         if offset < buf:len() then
             -- Read 16-bit cache key
             local cache_key = isbe and buf(offset, 2):uint() or buf(offset, 2):le_uint()
-            if field_tree then field_tree:add(buf(offset - 1, 1), string.format("DEBUG: parseField cache store key %d", cache_key)) end
             offset = offset + 2
             
             -- Use simplified cache store format
-            if field_tree then field_tree:set_text(string.format("cache_%d (0x%02X: struct)", cache_key, TYPE_CODE_STRUCT)) end
             
             -- Parse the following FieldDesc tree
             if offset < buf:len() then
@@ -1777,7 +1775,6 @@ function decodePVData(buf, pkt, t, isbe, label)
                                 local field_type = buf(offset, 1):uint()
                                 if field_type == CACHE_STORE_CODE then
                                     -- Handle nested cache store
-                                    pvd_tree:add(buf(offset, 1), string.format("DEBUG: Cache store detected for field '%s'", field_name or "unknown"))
                                     offset = offset + 1  -- Skip 0xFD
                                                                          if offset + 1 < buf:len() then
                                          local nested_cache_key = isbe and buf(offset, 2):uint() or buf(offset, 2):le_uint()
@@ -1789,7 +1786,6 @@ function decodePVData(buf, pkt, t, isbe, label)
                                         if offset < buf:len() then
                                             local next_type = buf(offset, 1):uint()
                                             -- Debug: add a temporary entry to show what type we detected
-                                            cache_tree:add(buf(offset, 1), string.format("DEBUG: Detected type 0x%02X (expecting 0x%02X)", next_type, TYPE_CODE_STRUCT))
                                             if next_type == TYPE_CODE_STRUCT then
                                                 offset = offset + 1  -- Skip 0x80
                                             
@@ -1857,15 +1853,9 @@ function decodePVData(buf, pkt, t, isbe, label)
                                     pvd_tree:add(buf(offset, 1), string.format("%s (0x%02X: %s)", field_name or "field", simple_field_type, simple_type_name))
                                     offset = offset + 1
                                     
-                                    -- Debug cache store check
-                                    if simple_field_type == CACHE_STORE_CODE then
-                                        pvd_tree:add(buf(offset, 1), string.format("DEBUG: Cache store detected, offset=%d, buflen=%d", offset, buf:len()))
-                                    end
-                                    
                                     -- If cache store, consume the 2-byte cache key
                                     if simple_field_type == CACHE_STORE_CODE and offset + 1 < buf:len() then
                                         local cache_key = isbe and buf(offset, 2):uint() or buf(offset, 2):le_uint()
-                                        pvd_tree:add(buf(offset, 2), string.format("DEBUG: Consuming cache key %d", cache_key))
                                         offset = offset + 2
                                     end
                                 end
@@ -2001,7 +1991,6 @@ function decodePVData(buf, pkt, t, isbe, label)
                             -- If cache store, consume the 2-byte cache key
                             if field_type == CACHE_STORE_CODE and offset + 1 < buf:len() then
                                 local cache_key = isbe and buf(offset, 2):uint() or buf(offset, 2):le_uint()
-                                pvd_tree:add(buf(offset, 2), string.format("DEBUG: Union path consuming cache key %d", cache_key))
                                 offset = offset + 2
                             end
                         end
@@ -2121,7 +2110,6 @@ function decodePVData(buf, pkt, t, isbe, label)
 
         -- DETAILED DEBUG: Show byte-by-byte parsing
         if offset < buf:len() then
-            local debug_tree = pvd_tree:add(buf(offset), string.format("DEBUG: Parsing from offset %d", offset))
             
             -- Show all remaining bytes
             local all_bytes = ""
