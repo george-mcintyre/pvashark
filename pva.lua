@@ -657,51 +657,45 @@ local function parseMonitorInit(buf, pkt, t, is_big_endian)
         return
     end
 
-    local offset = 0
-
     -- Parse ChangedBitSet
-    if offset < buf:len() then
-        local bitset_byte = buf(offset, 1):uint()
-        local bits_set = {}
-        for i = 0, 7 do
-            if bit.band(bitset_byte, bit.lshift(1, i)) ~= 0 then
-                table.insert(bits_set, i)
-            end
+    local bitset_byte = buf(0, 1):uint()
+    local bits_set = {}
+    for i = 0, 7 do
+        if bit.band(bitset_byte, bit.lshift(1, i)) ~= 0 then
+            table.insert(bits_set, i)
         end
-        local bits_str = table.concat(bits_set, ",")
-        t:add(buf(offset, 1), string.format("ChangedBitSet: 0x%02X (bits: %s)", bitset_byte, bits_str))
-        offset = offset + 1
     end
+    local bits_str = table.concat(bits_set, ",")
+    t:add(buf(0, 1), string.format("ChangedBitSet: 0x%02X (bits: %s)", bitset_byte, bits_str))
+    buf = buf(1)
 
     -- Parse Type ID string
-    if offset < buf:len() then
-        local type_id, type_id_offset = readPVString(buf, offset, is_big_endian)
+    if buf:len() then
+        local type_id, buf = decodeString(buf, is_big_endian, false)
         if type_id then
-            t:add(buf(offset, type_id_offset - offset), string.format("Type ID: %s", type_id))
-            offset = type_id_offset
+            t:add(buf(0, type_id.len()), string.format("Type ID: %s", type_id))
         end
     end
 
     -- Parse FieldDesc structure (starts with field count, not TypeCode)
-    if offset < buf:len() then
-        local field_count, count_offset = readPVSize(buf, offset, is_big_endian)
-        t:add(buf(offset, count_offset - offset), string.format("Field Count: %d", field_count))
-        offset = count_offset
+    if buf:len() then
+        local field_count, buf = decodeSize(buf, is_big_endian, false)
 
-        -- Parse each field using unified system
-        for i = 1, math.min(field_count, 10) do
-            if offset >= buf:len() then break end
+        if ( field_count and field_count > 0)
+        then
+            -- Parse each field using unified system
+            for i = 1, field_count do
+                if buf:len() <= 0 then break end
 
-            local field_name, name_offset = readPVString(buf, offset, is_big_endian)
-            if not field_name then break end
-            offset = name_offset
-
-            offset = parseFieldDesc(buf, is_big_endian, t, field_name)
+                local field_name, buf = decodeString(buf, offset, is_big_endian, false)
+                if not field_name then break end
+                buf = parseFieldDesc(buf, is_big_endian, t, field_name)
+            end
         end
 
         -- Show remaining data if any
-        if offset < buf:len() then
-            t:add(buf(offset), string.format("Remaining data (%d bytes)", buf:len() - offset))
+        if buf:len() > 0 then
+            t:add(buf, string.format("Remaining data (%d bytes)", buf:len()))
         end
     end
 end
@@ -1388,7 +1382,7 @@ function pva.dissector (buf, pkt, root)
         else
             -- just right
             total_consumed = total_consumed + consumed
-            buf = buf(consumed)
+            buf = buf(consumed):tvb()
         end
     end
 end
