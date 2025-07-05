@@ -59,6 +59,7 @@ local application_messages = {
     [ORIGIN_TAG_MESSAGE] = "ORIGIN_TAG",
 }
 
+local parseFieldDesc
 local pvaClientCreateChannelDecoder
 local pvaClientDestroyDecoder
 local pvaClientSearchDecoder
@@ -565,33 +566,6 @@ local function isAuthMethod(str, position, prev_was_method)
     return false
 end
 
-
--- Since PVA has some identifiable header we can
--- avoid having to select "Decode as..." every time :)
-local function test_pva (buf, pkt, root)
-    -- check for 8 byte minimum length, prefix [MAGIC, 1, _, cmd] where cmd is a valid command #
-    if buf:len()<8 or buf(0,1):uint()~= PVA_MAGIC or buf(1,1):uint()==0 or not application_messages[buf(3,1):uint()]
-    then
-        return false
-    end
-    pva.dissector(buf, pkt, root)
-    pkt.conversation = pva
-    return true
-end
-
-local status, err = pcall(function() pva:register_heuristic("tcp", test_pva) end)
-if not status then
-    print("Failed to register PVA heuristic TCP dissector.  Must manually specify TCP port! (try newer wireshark?)")
-    print(err)
-end
--- Wireshark 2.0 errors if the same protocol name is given for two
--- heuristic dissectors, even for different transports.
-local status, err = pcall(function() pva:register_heuristic("udp", test_pva) end)
-if not status then
-    print("Failed to register PVA heuristic UDP dissector.  Must manually specify UDP port! (try newer wireshark?)")
-    print(err)
-end
-
 ----------------------------------------------
 -- decodeStatus: decode the given message body to extract the status
 -- @param message_body: the buffer to decode from
@@ -620,13 +594,6 @@ local function decodeStatus (message_body, tree, is_big_endian)
     end
 end
 
-
--- ===================================================================
--- UNIFIED FIELDDESC PARSING SYSTEM
--- ===================================================================
-
--- Forward declaration
-local parseFieldDesc
 
 -- Parse structure FieldDesc: Type ID + field count + fields
 local function parseStructDesc(buf, offset, is_big_endian, tree, type_code)
@@ -689,7 +656,6 @@ local function parseUnionDesc(buf, offset, is_big_endian, tree, type_code)
     return offset
 end
 
--- Parse cache store: cache key + FieldDesc
 local function parseCacheStore(buf, offset, is_big_endian, tree)
     if offset + 1 < buf:len() then
         local cache_key = is_big_endian and buf(offset, 2):uint() or buf(offset, 2):le_uint()
@@ -702,7 +668,6 @@ local function parseCacheStore(buf, offset, is_big_endian, tree)
     return offset
 end
 
--- Parse cache fetch: cache key only
 local function parseCacheFetch(buf, offset, is_big_endian, tree)
     if offset + 1 < buf:len() then
         local cache_key = is_big_endian and buf(offset, 2):uint() or buf(offset, 2):le_uint()
@@ -712,7 +677,6 @@ local function parseCacheFetch(buf, offset, is_big_endian, tree)
     return offset
 end
 
--- Core FieldDesc parser - handles all TypeCodes uniformly
 parseFieldDesc = function(buf, offset, is_big_endian, tree, field_name)
     if not buf or offset >= buf:len() then
         return offset
@@ -1463,6 +1427,16 @@ function pva.dissector (buf, pkt, root)
     end
 end
 
+local function test_pva (buf, pkt, root)
+    if buf:len()<PVA_HEADER_LEN or buf(0,1):uint()~= PVA_MAGIC or buf(1,1):uint()==0 or not application_messages[buf(3,1):uint()]
+    then
+        return false
+    end
+    pva.dissector(buf, pkt, root)
+    pkt.conversation = pva
+    return true
+end
+
 -- initialise
 local utbl = DissectorTable.get("udp.port")
 utbl:add(5075, pva)
@@ -1470,5 +1444,17 @@ utbl:add(5076, pva)
 local ttbl = DissectorTable.get("tcp.port")
 ttbl:add(5075, pva)
 DissectorTable.get("tls.alpn"):add("pva/1", pva)
+
+local status, err = pcall(function() pva:register_heuristic("tcp", test_pva) end)
+if not status then
+    print("Failed to register PVA heuristic TCP dissector.  Must manually specify TCP port! (try newer wireshark?)")
+    print(err)
+end
+
+local status, err = pcall(function() pva:register_heuristic("udp", test_pva) end)
+if not status then
+    print("Failed to register PVA heuristic UDP dissector.  Must manually specify UDP port! (try newer wireshark?)")
+    print(err)
+end
 
 io.stderr:write("Loaded PVA\n")
