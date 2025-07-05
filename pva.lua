@@ -585,6 +585,30 @@ local function parsePVField(buf, offset, isbe, tree, depth)
             end
         end
 
+    elseif type_byte == CACHE_STORE_CODE then -- cache store: 0xFD key FieldDesc
+        if offset < buf:len() then
+            -- Read 16-bit cache key
+            local cache_key = isbe and buf(offset, 2):uint() or buf(offset, 2):le_uint()
+            field_tree:append_text(string.format(" (cache store, key: %d)", cache_key))
+            field_tree:add(buf(offset, 2), string.format("Cache Key: %d", cache_key))
+            offset = offset + 2
+            
+            -- Parse the following FieldDesc tree
+            if offset < buf:len() then
+                field_tree:append_text(" -> storing:")
+                offset = parsePVField(buf, offset, isbe, field_tree, depth + 1)
+            end
+        end
+        
+    elseif type_byte == CACHE_FETCH_CODE then -- cache fetch: 0xFE key
+        if offset < buf:len() then
+            -- Read 16-bit cache key
+            local cache_key = isbe and buf(offset, 2):uint() or buf(offset, 2):le_uint()
+            field_tree:append_text(string.format(" (cache fetch, key: %d)", cache_key))
+            field_tree:add(buf(offset, 2), string.format("Cache Key: %d", cache_key))
+            offset = offset + 2
+        end
+
     elseif type_byte == TYPE_CODE_BOOLEAN then -- bool
         field_tree:append_text(" (bool type)")
     elseif type_byte >= TYPE_CODE_BYTE and type_byte <= TYPE_CODE_ULONG then -- integer types
@@ -706,6 +730,30 @@ local function parseField(buf, offset, isbe, tree, depth)
             offset = name_offset
 
             offset = parseField(buf, offset, isbe, field_tree, depth + 1)
+        end
+
+    elseif field_type == CACHE_STORE_CODE then -- cache store: 0xFD key FieldDesc
+        if offset < buf:len() then
+            -- Read 16-bit cache key
+            local cache_key = isbe and buf(offset, 2):uint() or buf(offset, 2):le_uint()
+            if field_tree then field_tree:append_text(string.format(" (cache store, key: %d)", cache_key)) end
+            if field_tree then field_tree:add(buf(offset, 2), string.format("Cache Key: %d", cache_key)) end
+            offset = offset + 2
+            
+            -- Parse the following FieldDesc tree
+            if offset < buf:len() then
+                if field_tree then field_tree:append_text(" -> storing:") end
+                offset = parseField(buf, offset, isbe, field_tree, depth + 1)
+            end
+        end
+        
+    elseif field_type == CACHE_FETCH_CODE then -- cache fetch: 0xFE key
+        if offset < buf:len() then
+            -- Read 16-bit cache key
+            local cache_key = isbe and buf(offset, 2):uint() or buf(offset, 2):le_uint()
+            if field_tree then field_tree:append_text(string.format(" (cache fetch, key: %d)", cache_key)) end
+            if field_tree then field_tree:add(buf(offset, 2), string.format("Cache Key: %d", cache_key)) end
+            offset = offset + 2
         end
 
     elseif field_type == TYPE_CODE_STRING then -- string
@@ -1050,6 +1098,31 @@ local function parseFieldInfo(buf, offset, isbe, depth)
                 table.insert(field_info.fields, choice_field)
             end
             offset = choice_offset
+        end
+        
+    elseif field_type == CACHE_STORE_CODE then -- cache store: 0xFD key FieldDesc
+        if offset + 1 < buf:len() then
+            -- Read 16-bit cache key
+            local cache_key = isbe and buf(offset, 2):uint() or buf(offset, 2):le_uint()
+            field_info.cache_key = cache_key
+            offset = offset + 2
+            
+            -- Parse the following FieldDesc tree
+            if offset < buf:len() then
+                local nested_offset, nested_field = parseFieldInfo(buf, offset, isbe, depth + 1)
+                if nested_field then
+                    field_info.cached_field = nested_field
+                end
+                offset = nested_offset
+            end
+        end
+        
+    elseif field_type == CACHE_FETCH_CODE then -- cache fetch: 0xFE key
+        if offset + 1 < buf:len() then
+            -- Read 16-bit cache key
+            local cache_key = isbe and buf(offset, 2):uint() or buf(offset, 2):le_uint()
+            field_info.cache_key = cache_key
+            offset = offset + 2
         end
     end
 
@@ -1645,7 +1718,117 @@ function decodePVData(buf, pkt, t, isbe, label)
     local offset = 1
     local main_field_info = nil
 
-            if first_byte == TYPE_CODE_UNION then -- union
+    if first_byte == CACHE_STORE_CODE then -- cache store: 0xFD key FieldDesc
+        if offset + 1 < buf:len() then
+            -- Read 16-bit cache key
+            local cache_key = isbe and buf(offset, 2):uint() or buf(offset, 2):le_uint()
+            pvd_tree:append_text(string.format(" (cache store, key: %d)", cache_key))
+            pvd_tree:add(buf(offset, 2), string.format("Cache Key: %d", cache_key))
+            offset = offset + 2
+            
+            -- Parse the following FieldDesc tree
+            if offset < buf:len() then
+                pvd_tree:append_text(" -> storing:")
+                -- Parse the FieldDesc tree starting from current offset
+                -- Check if the next byte is a structure type (0x80)
+                if offset < buf:len() then
+                    local struct_type = buf(offset, 1):uint()
+                    if struct_type == TYPE_CODE_STRUCT then
+                        offset = offset + 1 -- Skip the 0x80 type byte
+                        
+                        -- Read Type ID string
+                        local type_id, type_id_offset = readPVString(buf, offset, isbe)
+                        if type_id and type_id ~= "" then
+                            pvd_tree:add(buf(offset, type_id_offset - offset), string.format("Type ID: \"%s\"", type_id))
+                        end
+                        offset = type_id_offset
+                        
+                        -- Read field count
+                        local field_count, count_offset = readPVSize(buf, offset, isbe)
+                        pvd_tree:add(buf(offset, count_offset - offset), string.format("Field Count: %d", field_count))
+                        offset = count_offset
+                        
+                        -- Parse each field (name + FieldDesc)
+                        for i = 1, math.min(field_count, 20) do
+                            if offset >= buf:len() then break end
+                            
+                            -- Read field name
+                            local field_name, name_offset = readPVString(buf, offset, isbe)
+                            if field_name and field_name ~= "" then
+                                pvd_tree:add(buf(offset, name_offset - offset), string.format("Field %d Name: \"%s\"", i, field_name))
+                            end
+                            offset = name_offset
+                            
+                            -- Parse field type recursively 
+                            -- Check if the field is also a cache store
+                            if offset < buf:len() then
+                                local field_type = buf(offset, 1):uint()
+                                if field_type == CACHE_STORE_CODE then
+                                    -- Handle nested cache store
+                                    offset = offset + 1  -- Skip 0xFD
+                                    if offset + 1 < buf:len() then
+                                        local nested_cache_key = isbe and buf(offset, 2):uint() or buf(offset, 2):le_uint()
+                                        local cache_tree = pvd_tree:add(buf(offset - 1, 3), string.format("Nested Cache Store (key: %d)", nested_cache_key))
+                                        cache_tree:add(buf(offset, 2), string.format("Cache Key: %d", nested_cache_key))
+                                        offset = offset + 2
+                                        
+                                        -- Parse the nested structure
+                                        if offset < buf:len() and buf(offset, 1):uint() == TYPE_CODE_STRUCT then
+                                            offset = offset + 1  -- Skip 0x80
+                                            
+                                            -- Read nested Type ID
+                                            local nested_type_id, nested_type_offset = readPVString(buf, offset, isbe)
+                                            if nested_type_id and nested_type_id ~= "" then
+                                                cache_tree:add(buf(offset, nested_type_offset - offset), string.format("Type ID: \"%s\"", nested_type_id))
+                                            end
+                                            offset = nested_type_offset
+                                            
+                                            -- Read nested field count
+                                            local nested_field_count, nested_count_offset = readPVSize(buf, offset, isbe)
+                                            cache_tree:add(buf(offset, nested_count_offset - offset), string.format("Field Count: %d", nested_field_count))
+                                            offset = nested_count_offset
+                                            
+                                            -- Parse nested fields
+                                            for j = 1, math.min(nested_field_count, 10) do
+                                                if offset >= buf:len() then break end
+                                                
+                                                local nested_field_name, nested_name_offset = readPVString(buf, offset, isbe)
+                                                if nested_field_name and nested_field_name ~= "" then
+                                                    cache_tree:add(buf(offset, nested_name_offset - offset), string.format("Field %d Name: \"%s\"", j, nested_field_name))
+                                                end
+                                                offset = nested_name_offset
+                                                
+                                                -- Parse nested field type
+                                                offset = parsePVField(buf, offset, isbe, cache_tree, 2)
+                                            end
+                                        else
+                                            offset = parsePVField(buf, offset, isbe, cache_tree, 2)
+                                        end
+                                    end
+                                else
+                                    offset = parsePVField(buf, offset, isbe, pvd_tree, 1)
+                                end
+                            end
+                        end
+                    else
+                        -- Not a structure, parse as regular FieldDesc
+                        offset = parsePVField(buf, offset, isbe, pvd_tree, 1)
+                    end
+                end
+                return pvd_tree
+            end
+        end
+        
+    elseif first_byte == CACHE_FETCH_CODE then -- cache fetch: 0xFE key
+        if offset + 1 < buf:len() then
+            -- Read 16-bit cache key
+            local cache_key = isbe and buf(offset, 2):uint() or buf(offset, 2):le_uint()
+            pvd_tree:append_text(string.format(" (cache fetch, key: %d)", cache_key))
+            pvd_tree:add(buf(offset, 2), string.format("Cache Key: %d", cache_key))
+            return pvd_tree
+        end
+
+    elseif first_byte == TYPE_CODE_UNION then -- union
         -- Parse union name
         local union_name, name_offset = readPVAString(buf, offset, isbe, nil, nil)
         offset = name_offset
