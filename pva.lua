@@ -279,6 +279,14 @@ pva.fields = {
 -- Utility functions
 ----------------------------------------------
 
+local function getUint(src, is_big_endian)
+    if is_big_endian == nil or is_big_endian then
+        return src:uint()
+    else
+        return src:le_uint()
+    end
+end
+
 -- decodeSize: decode a size from a buffer
 -- size is encoded as a single byte, or 4 bytes if the first byte is 0xFE or 0xFF
 -- @param buf: the buffer to decode from
@@ -304,11 +312,7 @@ local function decodeSize(buf, is_big_endian, is_nullable)
         if buf_len < 3 then
             return 0, buf
         end
-        if is_big_endian then
-            return buf(1,2):uint(), buf(3)
-        else
-            return buf(1,2):le_uint(), buf(3)
-        end
+        return getUint(buf(1,2), is_big_endian), buf(3)
     elseif short_size<0xFE then
         -- one byte size
         return short_size, remaining_buf
@@ -317,11 +321,7 @@ local function decodeSize(buf, is_big_endian, is_nullable)
         if buf_len < 5 then
             return 0, buf
         end
-        if is_big_endian then
-            return buf(1,4):uint(), buf(5)
-        else
-            return buf(1,4):le_uint(), buf(5)
-        end
+        return getUint(buf(1,4), is_big_endian), buf(5)
     end
 end
 
@@ -753,52 +753,54 @@ end
 -- command decoders
 ----------------------------
 
-local function pva_client_search (buf, pkt, t, is_big_endian, cmd)
-    local seq, port
-    if is_big_endian then
-        seq = buf(0,4):uint()
-        port = buf(24,2):uint()
-    else
-        seq = buf(0,4):le_uint()
-        port = buf(24,2):le_uint()
-    end
-    pkt.cols.info:append("SEARCH("..seq)
 
-    t:add(fsearch_seq, buf(0,4), seq)
-    local mask = t:add(fsearch_mask, buf(4,1))
-    mask:add(fsearch_mask_repl, buf(4,1))
-    mask:add(fsearch_mask_bcast, buf(4,1))
-    t:add(fsearch_addr, buf(8,16))
-    t:add(fsearch_port, buf(24,2), port)
+----------------------------------------------
+-- pvaClientSearchDecoder: decode the given message body into the given packet and root tree node
+-- @param message_body: the buffer to decode from
+-- @param pkt: the packet to decode into
+-- @param tree: the tree node to decode into
+-- @param is_big_endian is the byte stream big endian
+----------------------------------------------
+local function pvaClientSearchDecoder (message_body, pkt, tree, is_big_endian)
+    local SEARCH_HEADER_SIZE = 26
+    local raw_sequence_number = message_body(0,4)
+    local sequence_number = getUint(raw_sequence_number, is_big_endian)
+    local port = getUint(message_body(24,2), is_big_endian)
+    pkt.cols.info:append("SEARCH(".. sequence_number)
 
-    local nproto, npv
+    tree:add(fsearch_seq, raw_sequence_number, sequence_number)
 
-    nproto, buf = decodeSize(buf(26), is_big_endian)
-    for i=0,nproto-1 do
+    local raw_mask = message_body(4,1)
+    local mask = tree:add(fsearch_mask, raw_mask)
+    mask:add(fsearch_mask_repl, raw_mask)
+    mask:add(fsearch_mask_bcast, raw_mask)
+    tree:add(fsearch_addr, message_body(8,16))
+    tree:add(fsearch_port, message_body(24,2), port)
+
+    local n_protocols
+
+    -- get protocols list
+    n_protocols, message_body = decodeSize(message_body(SEARCH_HEADER_SIZE), is_big_endian)
+    for i=0, n_protocols -1 do
         local name
-        name, buf = decodeString(buf, is_big_endian)
-        t:add(fsearch_proto, name)
+        name, message_body = decodeString(message_body, is_big_endian)
+        tree:add(fsearch_proto, name)
     end
 
-    if is_big_endian then
-        npv = buf(0,2):uint()
-    else
-        npv = buf(0,2):le_uint()
-    end
-    t:add(fsearch_count, buf(0,2), npv);
-    if npv>0 then
-        buf = buf(2)
+    -- get pvs list
+    local raw_n_pv = message_body(0,2)
+    local n_pvs = getUint(raw_n_pv, is_big_endian)
+    tree:add(fsearch_count, raw_n_pv, n_pvs);
+    if n_pvs >0 then
+        message_body = message_body(2)
 
-        for i=0,npv-1 do
-            local cid, name
-            if is_big_endian then
-                cid = buf(0,4):uint()
-            else
-                cid = buf(0,4):le_uint()
-            end
-            t:add(fsearch_cid, buf(0,4), cid)
-            name, buf = decodeString(buf(4), is_big_endian)
-            t:add(fsearch_name, name)
+        for i=0, n_pvs -1 do
+            local name
+            local raw_cid = message_body(0,4)
+            local cid = getUint(raw_cid, is_big_endian)
+            tree:add(fsearch_cid, raw_cid, cid)
+            name, message_body = decodeString(message_body(4), is_big_endian)
+            tree:add(fsearch_name, name)
 
             pkt.cols.info:append(', '..cid..":'"..name:string().."'")
         end
@@ -806,71 +808,61 @@ local function pva_client_search (buf, pkt, t, is_big_endian, cmd)
     pkt.cols.info:append("), ")
 end
 
-local function pva_server_beacon (buf, pkt, t, is_big_endian, cmd)
-    local seq, change, port, proto
+----------------------------------------------
+-- pvaServerBeaconDecoder: decode the given message body into the given packet and root tree node
+-- @param message_body: the buffer to decode from
+-- @param pkt: the packet to decode into
+-- @param tree: the tree node to decode into
+-- @param is_big_endian is the byte stream big endian
+----------------------------------------------
+local function pvaServerBeaconDecoder (message_body, pkt, tree, is_big_endian)
+    local raw_beacon_header = message_body(0,12)
+    tree:add(fguid, raw_beacon_header)
+    local sequence_number = getUint(message_body(13,1), is_big_endian)
+    local change = getUint(message_body(14,2), is_big_endian)
+    local port = getUint(message_body(32,2), is_big_endian)
+    tree:add(fbeacon_seq, message_body(13,1), sequence_number)
+    tree:add(fbeacon_change, message_body(14,2), change)
+    tree:add(fsearch_addr, message_body(16,16))
+    tree:add(fsearch_port, message_body(32,2), port)
 
-    t:add(fguid, buf(0,12))
-    if is_big_endian then
-        seq = buf(13,1):uint()
-        change = buf(14,2):uint()
-        port = buf(32,2):uint()
-    else
-        seq = buf(13,1):le_uint()
-        change = buf(14,2):le_uint()
-        port = buf(32,2):le_uint()
-    end
-    t:add(fbeacon_seq, buf(13,1), seq)
-    t:add(fbeacon_change, buf(14,2), change)
-    t:add(fsearch_addr, buf(16,16))
-    t:add(fsearch_port, buf(32,2), port)
-
-    pkt.cols.info:append("BEACON(0x"..buf(0,12)..", "..seq..", "..change..")")
-
-    proto, buf = decodeString(buf(34), is_big_endian)
-    t:add(fsearch_proto, proto)
-end
-
-local function pva_server_search_response (buf, pkt, t, is_big_endian, cmd)
-    local seq, port
-    if is_big_endian then
-        seq = buf(12,4):uint()
-        port = buf(32,2):uint()
-    else
-        seq = buf(12,4):le_uint()
-        port = buf(32,2):le_uint()
-    end
-    pkt.cols.info:append("SEARCH_RESPONSE("..seq)
-
-    t:add(fguid, buf(0,12))
-    t:add(fsearch_seq, buf(12,4), seq)
-    t:add(fsearch_addr, buf(16,16))
-    t:add(fsearch_port, buf(32,2), port)
+    pkt.cols.info:append("BEACON(0x".. raw_beacon_header ..", ".. sequence_number ..", "..change..")")
 
     local proto
-    proto, buf = decodeString(buf(34), is_big_endian)
-    t:add(fsearch_proto, proto)
+    proto, message_body = decodeString(message_body(34), is_big_endian)
+    tree:add(fsearch_proto, proto)
+end
 
-    t:add(fsearch_found, buf(0, 1))
+----------------------------------------------
+-- pvaServerSearchResponseDecoder: decode the given message body into the given packet and root tree node
+-- @param message_body: the buffer to decode from
+-- @param pkt: the packet to decode into
+-- @param tree: the tree node to decode into
+-- @param is_big_endian is the byte stream big endian
+----------------------------------------------
+local function pvaServerSearchResponseDecoder (message_body, pkt, tree, is_big_endian)
+    local sequence_number = getUint(message_body(12,4), is_big_endian)
+    local port = getUint(message_body(32,2), is_big_endian)
+    pkt.cols.info:append("SEARCH_RESPONSE(".. sequence_number)
 
-    local npv
-    if is_big_endian then
-        npv = buf(1,2):uint()
-    else
-        npv = buf(1,2):le_uint()
-    end
-    if npv>0 then
-        buf = buf(3)
+    tree:add(fguid, message_body(0,12))
+    tree:add(fsearch_seq, message_body(12,4), sequence_number)
+    tree:add(fsearch_addr, message_body(16,16))
+    tree:add(fsearch_port, message_body(32,2), port)
 
-        for i=0,npv-1 do
-            local cid, name
+    local proto
+    proto, message_body = decodeString(message_body(34), is_big_endian)
+    tree:add(fsearch_proto, proto)
 
-            if is_big_endian then
-                cid = buf(i*4,4):uint()
-            else
-                cid = buf(i*4,4):le_uint()
-            end
-            t:add(fsearch_cid, buf(i*4,4), cid)
+    tree:add(fsearch_found, message_body(0, 1))
 
+    local n_pvs = getUint(message_body(1,2), is_big_endian)
+    if n_pvs >0 then
+        message_body = message_body(3)
+        for i=0, n_pvs -1 do
+            local raw_cid = message_body(i*4,4)
+            local cid = getUint(raw_cid, is_big_endian)
+            tree:add(fsearch_cid, raw_cid, cid)
             pkt.cols.info:append(', '..cid)
         end
     end
@@ -878,43 +870,43 @@ local function pva_server_search_response (buf, pkt, t, is_big_endian, cmd)
 
 end
 
-local function pva_client_validate (buf, pkt, t, is_big_endian, cmd)
+----------------------------------------------
+-- pvaClientValidateDecoder: decode the given message body into the given packet and root tree node
+-- @param message_body: the buffer to decode from
+-- @param pkt: the packet to decode into
+-- @param tree: the tree node to decode into
+-- @param is_big_endian is the byte stream big endian
+----------------------------------------------
+local function pvaClientValidateDecoder (message_body, pkt, tree, is_big_endian)
     pkt.cols.info:append("CONNECTION_VALIDATION, ")
-    local bsize, isize, qos
-    if is_big_endian
-    then
-        bsize = buf(0,4):uint()
-        isize = buf(4,2):uint()
-        qos = buf(6,2):uint()
-    else
-        bsize = buf(0,4):le_uint()
-        isize = buf(4,2):le_uint()
-        qos = buf(6,2):le_uint()
-    end
-    t:add(fvalid_bsize, buf(0,4), bsize)
-    t:add(fvalid_isize, buf(4,2), isize)
-    t:add(fvalid_qos, buf(6,2), qos)
+    local bsize  = getUint(message_body(0,4), is_big_endian)
+    local isize = getUint(message_body(4,2), is_big_endian)
+    local qos = getUint(message_body(6,2), is_big_endian)
+    tree:add(fvalid_bsize, message_body(0,4), bsize)
+    tree:add(fvalid_isize, message_body(4,2), isize)
+    tree:add(fvalid_qos, message_body(6,2), qos)
 
-    method, buf = decodeString(buf(8), is_big_endian)
+    local method
+    method, message_body = decodeString(message_body(8), is_big_endian)
 
     -- Declare variables for authz processing
-    local authzsize = 0
+    local n_authz = 0
     local has_authz_extensions = false
 
     -- extensions to the AUTHZ message
-    if (buf:len() > 1)
+    if (message_body and message_body:len() > 1)
     then
         local authzmessage, authzflags
-        authzmessage = buf(0,1):uint()
+        authzmessage = message_body(0,1):uint()
         if authzmessage == 0xfd
         then
-            buf=buf(3)
+            message_body = message_body(3)
         end
         -- Add authz flags at the main level (applies to all entries)
-        t:add(fvalid_azflg,  buf(1,1))
-        authzflags = buf(1,1):uint()
-        authzsize  = buf(2,1):uint()
-        buf = buf(3)
+        tree:add(fvalid_azflg,  message_body(1,1))
+        authzflags = message_body(1,1):uint()
+        n_authz = message_body(2,1):uint()
+        message_body = message_body(3)
         has_authz_extensions = true
     end
 
@@ -922,79 +914,78 @@ local function pva_client_validate (buf, pkt, t, is_big_endian, cmd)
     if method:string():lower() == "x509" then
         pkt.cols.info:append("X509 AUTHZ, ")
     elseif has_authz_extensions then
-        if authzsize == 2 then
+        if n_authz == 2 then
             pkt.cols.info:append("CA AUTHZ, ")
-        elseif authzsize == 3 then
+        elseif n_authz == 3 then
             pkt.cols.info:append("PVA AUTHZ, ")
         end
     end
 
     -- Start with basic auth entry for the method
-    local entry_tree = t:add("AuthZ Entry 1")
+    local entry_tree = tree:add("AuthZ Entry 1")
     entry_tree:add(fvalid_method, method)
 
     -- Process authz extensions if present
-    if has_authz_extensions and (buf and buf:len() > 0)
+    if has_authz_extensions
     then
-
-        local peer, method_var, authority, account, isTLS
-        if authzsize == 2
+        local peer, authority, account
+        if n_authz == 2
         then
-            buf = skipNextElement(buf, is_big_endian)
-            buf = skipNextElement(buf, is_big_endian)
+            message_body = skipNextElement(message_body, is_big_endian)
+            message_body = skipNextElement(message_body, is_big_endian)
 
-            account, buf = decodeString(buf, is_big_endian)
-            peer, buf = decodeString(buf, is_big_endian)
+            account, message_body = decodeString(message_body, is_big_endian)
+            peer, message_body = decodeString(message_body, is_big_endian)
 
             -- Add additional fields to the existing auth entry
             entry_tree:add(fvalid_user, account)
             entry_tree:add(fvalid_host, peer)
 
-        elseif authzsize == 3
+        elseif n_authz == 3
         then
-            buf = skipNextElement(buf, is_big_endian)
-            buf = skipNextElement(buf, is_big_endian)
-            buf = skipNextElement(buf, is_big_endian)
+            message_body = skipNextElement(message_body, is_big_endian)
+            message_body = skipNextElement(message_body, is_big_endian)
+            message_body = skipNextElement(message_body, is_big_endian)
 
-            peer, buf = decodeString(buf, is_big_endian)
-            authority, buf = decodeString(buf, is_big_endian)
-            account, buf = decodeString(buf, is_big_endian)
+            peer, message_body = decodeString(message_body, is_big_endian)
+            authority, message_body = decodeString(message_body, is_big_endian)
+            account, message_body = decodeString(message_body, is_big_endian)
 
             -- Add additional fields to the existing auth entry
             entry_tree:add(fvalid_host, peer)
             -- Only show AuthZ authority field when method is not 'ca'
             if method:string():lower() ~= "ca" then
                 entry_tree:add(fvalid_authority, authority)
+                entry_tree:add(fvalid_isTLS, 1)
             end
             entry_tree:add(fvalid_user, account)
-            entry_tree:add(fvalid_isTLS, 1)
         end
     end
 end
 
-local function pva_server_validate (buf, pkt, t, is_big_endian, cmd)
+----------------------------------------------
+-- pvsServerValidateDecoder: decode the given message body into the given packet and root tree node
+-- @param message_body: the buffer to decode from
+-- @param pkt: the packet to decode into
+-- @param tree: the tree node to decode into
+-- @param is_big_endian is the byte stream big endian
+----------------------------------------------
+local function pvsServerValidateDecoder (message_body, pkt, tree, is_big_endian)
     pkt.cols.info:append("CONNECTION_VALIDATION, ")
+    local VALIDATION_HEADER_LEN = 7
 
-    if buf:len() >= 7 then
+    if message_body:len() >= VALIDATION_HEADER_LEN then
         -- Parse header: 4 bytes buffer size, 2 bytes introspection size, 1 byte flags
-        local bsize, isize, flags
-        if is_big_endian
-        then
-            bsize = buf(0,4):uint()
-            isize = buf(4,2):uint()
-        else
-            bsize = buf(0,4):le_uint()
-            isize = buf(4,2):le_uint()
-        end
-        flags = buf(6,1):uint()
-
-        t:add(fvalid_bsize, buf(0,4), bsize)
-        t:add(fvalid_isize, buf(4,2), isize)
-        t:add(fvalid_azflg, buf(6,1), flags)
+        local bsize getUint(message_body(0,4), is_big_endian)
+        local isize getUint(message_body(4,2), is_big_endian)
+        local flags = message_body(6,1):uint()
+        tree:add(fvalid_bsize, message_body(0,4), bsize)
+        tree:add(fvalid_isize, message_body(4,2), isize)
+        tree:add(fvalid_azflg, message_body(6,1), flags)
 
         -- Parse all strings into a table first
-        if buf:len() > 7 then
-            local remaining = buf(7):tvb()
+        if message_body:len() > VALIDATION_HEADER_LEN then
+            local remaining = message_body(VALIDATION_HEADER_LEN):tvb()
             local strings = {}
 
             -- Collect all strings
@@ -1044,7 +1035,7 @@ local function pva_server_validate (buf, pkt, t, is_big_endian, cmd)
 
                 -- Create subtrees for each auth entry
                 for i, entry in ipairs(auth_entries) do
-                    local entry_tree = t:add("AuthZ Entry " .. i)
+                    local entry_tree = tree:add("AuthZ Entry " .. i)
 
                     if entry.name then
                         entry_tree:add(fvalid_user, entry.name)
@@ -1060,16 +1051,16 @@ local function pva_server_validate (buf, pkt, t, is_big_endian, cmd)
 
             -- Handle any remaining unprocessed data
             if remaining and remaining:len() > 0 then
-                t:add(fbody, remaining)
+                tree:add(fbody, remaining)
             end
         end
     else
         -- Too short, show as raw body
-        t:add(fbody, buf)
+        tree:add(fbody, message_body)
     end
 end
 
-local function pva_client_create_channel (buf, pkt, t, is_big_endian, cmd)
+local function pvaClientCreateChannelDecoder (buf, pkt, t, is_big_endian, cmd)
     pkt.cols.info:append("CREATE_CHANNEL(")
     local npv
     if is_big_endian then
@@ -1096,7 +1087,7 @@ local function pva_client_create_channel (buf, pkt, t, is_big_endian, cmd)
     pkt.cols.info:append("'), ")
 end
 
-local function pva_server_create_channel (buf, pkt, t, is_big_endian, cmd)
+local function pvaServerCreateChannelDecoder (buf, pkt, t, is_big_endian, cmd)
     local cid, sid
     if is_big_endian
     then
@@ -1112,7 +1103,7 @@ local function pva_server_create_channel (buf, pkt, t, is_big_endian, cmd)
     decodeStatus(buf(8), pkt, t, is_big_endian)
 end
 
-local function pva_destroy_channel (buf, pkt, t, is_big_endian, cmd)
+local function pvaDestroyChannelDecoder (buf, pkt, t, is_big_endian, cmd)
     local cid, sid
     if is_big_endian
     then
@@ -1127,7 +1118,7 @@ local function pva_destroy_channel (buf, pkt, t, is_big_endian, cmd)
     t:add(fcid, buf(4,4), cid)
 end
 
-local function pva_client_op_destroy (buf, pkt, t, is_big_endian, cmd)
+local function pvaClientDestroyDecoder (buf, pkt, t, is_big_endian, cmd)
     local cname = application_messages[cmd]
     local sid, ioid;
     if is_big_endian
@@ -1144,7 +1135,7 @@ local function pva_client_op_destroy (buf, pkt, t, is_big_endian, cmd)
     pkt.cols.info:append(string.format("%s(sid=%u, ioid=%u), ", cname, sid, ioid))
 end
 
-local function pva_client_op (buf, pkt, t, is_big_endian, cmd)
+local function pvaGenericClientOpDecoder (buf, pkt, t, is_big_endian, cmd)
     local cname = application_messages[cmd]
     local sid, ioid, subcmd
     if is_big_endian
@@ -1172,7 +1163,7 @@ local function pva_client_op (buf, pkt, t, is_big_endian, cmd)
 end
 
 
-local function pva_server_op (buf, pkt, t, is_big_endian, cmd)
+local function pvaGenericServerOpDecoder (buf, pkt, t, is_big_endian, cmd)
     local cname = application_messages[cmd]
     local ioid, subcmd
     if is_big_endian
@@ -1209,32 +1200,32 @@ local function pva_server_op (buf, pkt, t, is_big_endian, cmd)
 end
 
 local server_cmd_handler = {
-    [0] = pva_server_beacon,
-    [1] = pva_server_validate,
-    [4] = pva_server_search_response,
-    [7] = pva_server_create_channel,
-    [8] = pva_destroy_channel,
-    [10] = pva_server_op,
-    [11] = pva_server_op,
-    [12] = pva_server_op,
-    [13] = pva_server_op,
-    [14] = pva_server_op,
-    [20] = pva_server_op,
+    [0] = pvaServerBeaconDecoder,
+    [1] = pvsServerValidateDecoder,
+    [4] = pvaServerSearchResponseDecoder,
+    [7] = pvaServerCreateChannelDecoder,
+    [8] = pvaDestroyChannelDecoder,
+    [10] = pvaGenericServerOpDecoder,
+    [11] = pvaGenericServerOpDecoder,
+    [12] = pvaGenericServerOpDecoder,
+    [13] = pvaGenericServerOpDecoder,
+    [14] = pvaGenericServerOpDecoder,
+    [20] = pvaGenericServerOpDecoder,
 }
 
 local client_cmd_handler = {
-    [1] = pva_client_validate,
-    [3] = pva_client_search,
-    [7] = pva_client_create_channel,
-    [8] = pva_destroy_channel,
-    [10] = pva_client_op,
-    [11] = pva_client_op,
-    [12] = pva_client_op,
-    [13] = pva_client_op,
-    [14] = pva_client_op,
-    [15] = pva_client_op_destroy,
-    [20] = pva_client_op,
-    [21] = pva_client_op_destroy,
+    [1] = pvaClientValidateDecoder,
+    [3] = pvaClientSearchDecoder,
+    [7] = pvaClientCreateChannelDecoder,
+    [8] = pvaDestroyChannelDecoder,
+    [10] = pvaGenericClientOpDecoder,
+    [11] = pvaGenericClientOpDecoder,
+    [12] = pvaGenericClientOpDecoder,
+    [13] = pvaGenericClientOpDecoder,
+    [14] = pvaGenericClientOpDecoder,
+    [15] = pvaClientDestroyDecoder,
+    [20] = pvaGenericClientOpDecoder,
+    [21] = pvaClientDestroyDecoder,
 }
 
 local PVA_MAGIC = 0xCA;
@@ -1273,12 +1264,7 @@ local function decode (buf, pkt, root)
     if is_ctrl_cmd == 0
     then
         -- decode length with 4 bytes with correct endianness
-        if is_big_endian ~= 0
-        then
-            message_len = raw_len:uint()
-        else
-            message_len = raw_len:le_uint()
-        end
+        message_len = getUint(raw_len, is_big_endian ~= 0)
     end
 
     -- check that buffer length is long enough
