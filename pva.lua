@@ -257,7 +257,11 @@ local fsearch_cid   = ProtoField.uint32(    "pva.cid",          "CID")
 local fsearch_name  = ProtoField.string(    "pva.pv",           "Name")
 
 -- For SEARCH_RESPONSE
-local fsearch_found = ProtoField.bool("pva.found", "Found")
+local fsearch_found = ProtoField.bool(      "pva.found",        "Found")
+
+----------------------------------------------
+-- ProtoFields variables
+----------------------------------------------
 
 pva.fields = {
     placeholder, fmagic, fver, fflags, fflag_dir, fflag_end, fflag_msgtype, fflag_segmented, fcmd, fctrlcmd, fctrldata, fsize, fbody, fpvd, fguid,
@@ -271,8 +275,35 @@ pva.fields = {
     fsearch_found,
 }
 
-local specials_server
-local specials_client
+local specials_server = {
+    [0] = pva_server_beacon,
+    [1] = pva_server_validate,
+    [4] = pva_server_search_response,
+    [7] = pva_server_create_channel,
+    [8] = pva_destroy_channel,
+    [10] = pva_server_op,
+    [11] = pva_server_op,
+    [12] = pva_server_op,
+    [13] = pva_server_op,
+    [14] = pva_server_op,
+    [20] = pva_server_op,
+}
+
+local specials_client = {
+    [1] = pva_client_validate,
+    [3] = pva_client_search,
+    [7] = pva_client_create_channel,
+    [8] = pva_destroy_channel,
+    [10] = pva_client_op,
+    [11] = pva_client_op,
+    [12] = pva_client_op,
+    [13] = pva_client_op,
+    [14] = pva_client_op,
+    [15] = pva_client_op_destroy,
+    [20] = pva_client_op,
+    [21] = pva_client_op_destroy,
+}
+
 
 local function decode (buf, pkt, root)
   if buf:len()<8 then return 0 end
@@ -1131,34 +1162,6 @@ local function pva_client_op_destroy (buf, pkt, t, isbe, cmd)
 
     pkt.cols.info:append(string.format("%s(sid=%u, ioid=%u), ", cname, sid, ioid))
 end
-
-specials_server = {
-    [0] = pva_server_beacon,
-    [1] = pva_server_validate,
-    [4] = pva_server_search_response,
-    [7] = pva_server_create_channel,
-    [8] = pva_destroy_channel,
-    [10] = pva_server_op,
-    [11] = pva_server_op,
-    [12] = pva_server_op,
-    [13] = pva_server_op,
-    [14] = pva_server_op,
-    [20] = pva_server_op,
-}
-specials_client = {
-    [1] = pva_client_validate,
-    [3] = pva_client_search,
-    [7] = pva_client_create_channel,
-    [8] = pva_destroy_channel,
-    [10] = pva_client_op,
-    [11] = pva_client_op,
-    [12] = pva_client_op,
-    [13] = pva_client_op,
-    [14] = pva_client_op,
-    [15] = pva_client_op_destroy,
-    [20] = pva_client_op,
-    [21] = pva_client_op_destroy,
-}
 
 -- ===================================================================
 -- UNIFIED FIELDDESC PARSING SYSTEM
