@@ -410,11 +410,12 @@ end
 
 -- Parse Type ID string
 local function getTypeId(message_body, is_big_endian)
+    local display_name = nil
     if message_body:len() > 0 then
         local type_id, remaining_buf = decodeString(message_body, is_big_endian, false)
         if type_id and type_id:len() > 0 then
             local type_id_str = type_id:string()
-            local display_name = type_id_str
+            display_name = type_id_str
 
             -- Look for normative type translation
             for i = 1, #nt_types, 2 do
@@ -427,7 +428,7 @@ local function getTypeId(message_body, is_big_endian)
             message_body = remaining_buf
         end
     end
-    return type_id, message_body
+    return type_id, message_body, display_name
 end
 
 
@@ -647,21 +648,23 @@ parseFieldDesc = function(buf, is_big_endian, tree, field_name)
 
     if type_code == TYPE_CODE_STRUCT or type_code == TYPE_CODE_UNION then
         -- Read optional Type ID string
-        local type_id, buf = getTypeId(buf, is_big_endian)
+        local type_id, buf, translated_name = getTypeId(buf, is_big_endian)
         local clean_name = "struct"
         if type_code == TYPE_CODE_UNION then clean_name = "union" end
 
-        if type_id and type_id:len() > 0 then
+        if translated_name then
+            clean_name = translated_name
+        elseif type_id and type_id:len() > 0 then
             -- Extract clean type name
             local type_id_str = type_id:string()
-            clean_name = type_id_str:match("([^:]+)") or type_id_str
+            clean_name = type_id_str:match("nt/([^:]+)") or type_id_str:match("([^:]+)") or type_id_str
         else
             clean_name = type_name
         end
 
         -- Create field display with standard format: fieldname (0xHH: typename)
         local display_name = field_name and string.format("%s (0x%02X: %s)", field_name, type_code, clean_name)
-                or string.format("(0x%02X: %s)", type_code, type_name)
+                or string.format("(0x%02X: %s)", type_code, clean_name)
         field_tree = tree:add(type_code, display_name)
     else
         field_tree = tree:add(placeholder, "Body")
