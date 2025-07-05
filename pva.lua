@@ -1888,7 +1888,6 @@ function decodePVData(buf, pkt, t, isbe, label)
         if offset + 1 < buf:len() then
             -- Read 16-bit cache key
             local cache_key = isbe and buf(offset, 2):uint() or buf(offset, 2):le_uint()
-            pvd_tree:set_text(string.format("Cache Fetch %d", cache_key))
             return pvd_tree
         end
 
