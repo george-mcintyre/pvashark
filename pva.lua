@@ -599,7 +599,7 @@ local function parseUnionDesc(buf, offset, is_big_endian, tree, type_code)
 end
 
 local function parseCacheStore(buf, is_big_endian, tree)
-    if buf and buf:len() > 1 then
+    if buf and buf:len() >= 2 then
         local cache_key = getUint(buf(0, 2), is_big_endian)
         tree:set_text(string.format("Cache Store %d", cache_key))
 
@@ -611,9 +611,12 @@ local function parseCacheStore(buf, is_big_endian, tree)
 end
 
 local function parseCacheFetch(buf, is_big_endian, tree)
-    if buf and buf:len() > 1 then
+    if buf and buf:len() >= 2 then
         local cache_key = getUint(buf(0, 2), is_big_endian)
         tree:set_text(string.format("Cache Fetch %d", cache_key))
+        if ( buf:len() == 2 ) then
+            return nil
+        end
         buf = buf(2)
     end
     return buf
