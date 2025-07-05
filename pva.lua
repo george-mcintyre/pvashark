@@ -177,7 +177,7 @@ local fflags        = ProtoField.uint8(     "pva.flags",        "Flags",        
 local fflag_dir     = ProtoField.uint8(     "pva.direction",    "Direction",        base.HEX, {[0]="client",[1]="server"}, 0x40)
 local fflag_end     = ProtoField.uint8(     "pva.endian",       "Byte order",       base.HEX, {[0]="LSB",[1]="MSB"}, 0x80)
 local fflag_msgtype = ProtoField.uint8(     "pva.msg_type",     "Message type",     base.HEX, {[0]="Application",[1]="Control"}, 0x01)
-local fflag_segmented = ProtoField.uint8(   "pva.segmented",    "Segmented",        base.HEX, {[0]="Not segmented",[1]="First segment",[2]="Last segment",[3]="In-the-middle segment"}, 0x30) -- TODO: add more types
+local fflag_segmented = ProtoField.uint8(   "pva.segmented",    "Segmented",        base.HEX, {[0]="Not segmented",[1]="First segment",[2]="Last segment",[3]="In-the-middle segment"}, 0x30)
 local fcmd          = ProtoField.uint8(     "pva.command",      "Command",          base.HEX, bcommands)
 local fctrlcmd      = ProtoField.uint8(     "pva.ctrlcommand",  "Control Command",  base.HEX, bctrlcommands)
 local fctrldata     = ProtoField.uint32(    "pva.ctrldata",     "Control Data",     base.HEX)
