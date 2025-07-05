@@ -348,6 +348,11 @@ pva.fields = {
 -- Utility functions
 ----------------------------------------------
 
+----------------------------------------------
+--- getUint: get an unsigned integer with the correct byte order
+--- @param src to read the uint from
+--- @param is_big_endian flag to indicate the bigendianness
+----------------------------------------------
 local function getUint(src, is_big_endian)
     if is_big_endian == nil or is_big_endian then
         return src:uint()
@@ -356,12 +361,14 @@ local function getUint(src, is_big_endian)
     end
 end
 
+----------------------------------------------
 -- decodeSize: decode a size from a buffer
 -- size is encoded as a single byte, or 4 bytes if the first byte is 0xFE or 0xFF
 -- @param buf: the buffer to decode from
 -- @param is_big_endian: true if the buffer is big endian
 -- @param , is_nullable: true if the buffer is nullable (default true)
 -- @return the size and the remaining buffer
+----------------------------------------------
 local function decodeSize(buf, is_big_endian, is_nullable)
     if is_nullable == nil then
         is_nullable = true
@@ -395,15 +402,13 @@ local function decodeSize(buf, is_big_endian, is_nullable)
 end
 
 ----------------------------------------------
--- String decoding
-----------------------------------------------
-
 -- decodeString: extract a string and return that string, and the remaining buffer
 -- string is encoded as a size (1 or 4 bytes) followed by the actual string
 -- @param buf: the buffer to decode from
 -- @param is_big_endian: true if the buffer is big endian
 -- @param , is_nullable: true if the buffer is nullable
 -- @return the string and the remaining buffer
+----------------------------------------------
 local function decodeString(buf, is_big_endian, is_nullable)
     if buf:len() == 0 then
         return buf(0,0), nil
@@ -424,10 +429,12 @@ local function decodeString(buf, is_big_endian, is_nullable)
     end
 end
 
+----------------------------------------------
 -- skipNextElement: skip the next element and return the remaining buffer
 -- @param buf: the buffer to decode from
 -- @param is_big_endian: true if the buffer is big endian
 -- @return the remaining buffer
+----------------------------------------------
 local function skipNextElement(buf, is_big_endian)
     local len, remaining_buf = decodeSize(buf, is_big_endian, is_nullable)
     if len == remaining_buf:len() then
@@ -437,27 +444,9 @@ local function skipNextElement(buf, is_big_endian)
     end
 end
 
-
--- Helper function to read PVData size (Phase 2)
-local function readPVSize(buf, offset, is_big_endian)
-    if not buf or offset >= buf:len() then
-        return 0, offset
-    end
-
-    local size_byte = buf(offset, 1):uint()
-    if size_byte < 0xFE then
-        return size_byte, offset + 1
-    elseif size_byte == 0xFE then
-        if offset + 2 >= buf:len() then return 0, offset end
-        local size = is_big_endian and buf(offset + 1, 2):uint() or buf(offset + 1, 2):le_uint()
-        return size, offset + 3
-    elseif size_byte == 0xFF then
-        if offset + 4 >= buf:len() then return 0, offset end
-        local size = is_big_endian and buf(offset + 1, 4):uint() or buf(offset + 1, 4):le_uint()
-        return size, offset + 5
-    end
-    return 0, offset
-end
+----------------------------
+-- PVData decoders
+----------------------------
 
 -- Helper function to read PVData string (Phase 2)
 local function readPVString(buf, offset, is_big_endian)
@@ -519,14 +508,6 @@ local function decodeAlarmStatus(severity, status)
     return sev_name, stat_name
 end
 
-
-
-
-
-
-
-
-
 -- Helper function to get type size (simplified version)
 local function getTypeSize(type_byte)
     if type_byte == TYPE_CODE_BOOLEAN then return 1 -- bool
@@ -545,8 +526,7 @@ local function getTypeSize(type_byte)
 end
 
 -- Helper function to identify authentication method strings
--- Context-aware: "anonymous" is usually a username, not a method
-local function isAuthMethod(str, position, prev_was_method)
+local function isAuthMethod(str, prev_was_method)
     local s = str:string():lower()
 
     -- Strong method indicators
@@ -596,12 +576,11 @@ end
 
 
 -- Parse structure FieldDesc: Type ID + field count + fields
-local function parseStructDesc(buf, offset, is_big_endian, tree, type_code)
+local function parseStructDesc(message_body, is_big_endian, tree, type_code)
     -- Read optional Type ID string
-    local type_id, type_id_offset = readPVString(buf, offset, is_big_endian)
+    local type_id, message_body = decodeString(message_body, offset, is_big_endian, false)
     local clean_name = "struct"
     if type_id and type_id ~= "" then
-        offset = type_id_offset
         -- Extract clean type name
         clean_name = type_id:match("([^:]+)") or type_id
     end
@@ -610,20 +589,18 @@ local function parseStructDesc(buf, offset, is_big_endian, tree, type_code)
     tree:set_text(string.format("(0x%02X: %s)", type_code, clean_name))
 
     -- Read field count
-    local field_count, count_offset = readPVSize(buf, offset, is_big_endian)
-    offset = count_offset
-
-    -- Parse each field: name + FieldDesc
-    for i = 1, math.min(field_count, 20) do -- Limit to prevent runaway
-        if offset >= buf:len() then break end
-
-        local field_name, name_offset = readPVString(buf, offset, is_big_endian)
-        offset = name_offset
-
-        offset = parseFieldDesc(buf, offset, is_big_endian, tree, field_name)
+    if (message_body ~= nil and message_body.len > 0) then
+        local field_count, message_body = decodeSize(message_body, is_big_endian, false)
+        if (field_count ~= nil and message_body ~= nil and message_body.len > 0) then
+            -- Parse each field: name + FieldDesc
+            for i = 1, field_count do
+                local field_name, message_body = decodeString(message_body, is_big_endian, false)
+                message_body = parseFieldDesc(message_body, is_big_endian, tree, field_name)
+            end
+        end
     end
 
-    return offset
+    return message_body
 end
 
 -- Parse union FieldDesc: Type ID + field count + fields
@@ -677,7 +654,7 @@ local function parseCacheFetch(buf, offset, is_big_endian, tree)
     return offset
 end
 
-parseFieldDesc = function(buf, offset, is_big_endian, tree, field_name)
+parseFieldDesc = function(buf, is_big_endian, tree, field_name)
     if not buf or offset >= buf:len() then
         return offset
     end
@@ -764,10 +741,6 @@ local function parseMonitorInit(buf, pkt, t, is_big_endian)
     end
 end
 
--- ===================================================================
--- SIMPLIFIED PVDATA DECODER
--- ===================================================================
-
 function decodePVData(buf, pkt, t, is_big_endian, label)
     if not buf or buf:len() == 0 then
         return
@@ -789,7 +762,6 @@ end
 ----------------------------
 -- command decoders
 ----------------------------
-
 
 ----------------------------------------------
 -- pvaClientSearchDecoder: decode the given message body into the given packet and root tree node
@@ -1043,7 +1015,7 @@ local function pvsServerValidateDecoder (message_body, pkt, tree, is_big_endian)
                 local has_seen_method = false
 
                 for i, str in ipairs(strings) do
-                    if isAuthMethod(str, i, has_seen_method) then
+                    if isAuthMethod(str, has_seen_method) then
                         -- This is a method string
                         if current_entry.method then
                             -- Current entry already has a method, start new entry
