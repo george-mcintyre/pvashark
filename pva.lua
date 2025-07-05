@@ -670,31 +670,36 @@ local function parseMonitorInit(buf, pkt, t, is_big_endian)
     buf = buf(1)
 
     -- Parse Type ID string
-    if buf:len() then
-        local type_id, buf = decodeString(buf, is_big_endian, false)
-        if type_id then
-            t:add(buf(0, type_id.len()), string.format("Type ID: %s", type_id))
+    if buf:len() > 0 then
+        local type_id, remaining_buf = decodeString(buf, is_big_endian, false)
+        if type_id and type_id:len() > 0 then
+            t:add(type_id, string.format("Type ID: %s", type_id:string()))
+            buf = remaining_buf
         end
     end
 
     -- Parse FieldDesc structure (starts with field count, not TypeCode)
-    if buf:len() then
-        local field_count, buf = decodeSize(buf, is_big_endian, false)
+    if buf:len() > 0 then
+        local field_count, remaining_buf = decodeSize(buf, is_big_endian, false)
+        if field_count then
+            t:add(string.format("Field Count: %d", field_count))
+            buf = remaining_buf
 
-        if ( field_count and field_count > 0)
-        then
-            -- Parse each field using unified system
-            for i = 1, field_count do
-                if buf:len() <= 0 then break end
+            if field_count > 0 then
+                -- Parse each field using unified system
+                for i = 1, field_count do
+                    if not buf or buf:len() <= 0 then break end
 
-                local field_name, buf = decodeString(buf, offset, is_big_endian, false)
-                if not field_name then break end
-                buf = parseFieldDesc(buf, is_big_endian, t, field_name)
+                    local field_name, remaining_buf = decodeString(buf, is_big_endian, false)
+                    if not field_name then break end
+                    buf = remaining_buf
+                    buf = parseFieldDesc(buf, is_big_endian, t, field_name:string())
+                end
             end
         end
 
         -- Show remaining data if any
-        if buf:len() > 0 then
+        if buf and buf:len() > 0 then
             t:add(buf, string.format("Remaining data (%d bytes)", buf:len()))
         end
     end
