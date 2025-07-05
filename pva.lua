@@ -1755,7 +1755,7 @@ function decodePVData(buf, pkt, t, isbe, label)
                         
                         -- Read field count
                         local field_count, count_offset = readPVSize(buf, offset, isbe)
-                        pvd_tree:add(buf(offset, count_offset - offset), string.format("Field Count: %d", field_count))
+                        -- pvd_tree:add(buf(offset, count_offset - offset), string.format("Field Count: %d", field_count))
                         offset = count_offset
                         
                         -- Parse each field (name + FieldDesc)
@@ -1805,7 +1805,7 @@ function decodePVData(buf, pkt, t, isbe, label)
                                             
                                             -- Read nested field count
                                             local nested_field_count, nested_count_offset = readPVSize(buf, offset, isbe)
-                                            cache_tree:add(buf(offset, nested_count_offset - offset), string.format("Field Count: %d", nested_field_count))
+                                            -- cache_tree:add(buf(offset, nested_count_offset - offset), string.format("Field Count: %d", nested_field_count))
                                             offset = nested_count_offset
                                             
                                             -- Parse nested fields
