@@ -345,7 +345,18 @@ local function getTypeId(message_body, tree, is_big_endian)
     if message_body:len() > 0 then
         local type_id, remaining_buf = decodeString(message_body, is_big_endian, false)
         if type_id and type_id:len() > 0 then
-            tree:add(type_id, string.format("Type ID: %s", type_id:string()))
+            local type_id_str = type_id:string()
+            local display_name = type_id_str
+            
+            -- Look for normative type translation
+            for i = 1, #nt_types, 2 do
+                if nt_types[i] == type_id_str then
+                    display_name = nt_types[i + 1]
+                    break
+                end
+            end
+            
+            tree:add(type_id, string.format("Type ID: %s", display_name))
             message_body = remaining_buf
         end
     end
