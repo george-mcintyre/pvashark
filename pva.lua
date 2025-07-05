@@ -682,7 +682,7 @@ local function parseMonitorInit(buf, pkt, t, is_big_endian)
     end
 
     -- Parse FieldDesc structure (starts with field count, not TypeCode)
-    if buf:len() > 0 then
+    if buf and buf:len() > 0 then
         local field_count, remaining_buf = decodeSize(buf, is_big_endian, false)
         if field_count then
             t:add(string.format("Field Count: %d", field_count))
