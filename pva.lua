@@ -589,13 +589,11 @@ local function parsePVField(buf, offset, isbe, tree, depth)
         if offset < buf:len() then
             -- Read 16-bit cache key
             local cache_key = isbe and buf(offset, 2):uint() or buf(offset, 2):le_uint()
-            field_tree:append_text(string.format(" (cache store, key: %d)", cache_key))
-            field_tree:add(buf(offset, 2), string.format("Cache Key: %d", cache_key))
+            field_tree:set_text(string.format("Cache Store %d", cache_key))
             offset = offset + 2
             
             -- Parse the following FieldDesc tree
             if offset < buf:len() then
-                field_tree:append_text(" -> storing:")
                 offset = parsePVField(buf, offset, isbe, field_tree, depth + 1)
             end
         end
@@ -604,8 +602,7 @@ local function parsePVField(buf, offset, isbe, tree, depth)
         if offset < buf:len() then
             -- Read 16-bit cache key
             local cache_key = isbe and buf(offset, 2):uint() or buf(offset, 2):le_uint()
-            field_tree:append_text(string.format(" (cache fetch, key: %d)", cache_key))
-            field_tree:add(buf(offset, 2), string.format("Cache Key: %d", cache_key))
+            field_tree:set_text(string.format("Cache Fetch %d", cache_key))
             offset = offset + 2
         end
 
@@ -736,13 +733,11 @@ local function parseField(buf, offset, isbe, tree, depth)
         if offset < buf:len() then
             -- Read 16-bit cache key
             local cache_key = isbe and buf(offset, 2):uint() or buf(offset, 2):le_uint()
-            if field_tree then field_tree:append_text(string.format(" (cache store, key: %d)", cache_key)) end
-            if field_tree then field_tree:add(buf(offset, 2), string.format("Cache Key: %d", cache_key)) end
+            if field_tree then field_tree:set_text(string.format("Cache Store %d", cache_key)) end
             offset = offset + 2
             
             -- Parse the following FieldDesc tree
             if offset < buf:len() then
-                if field_tree then field_tree:append_text(" -> storing:") end
                 offset = parseField(buf, offset, isbe, field_tree, depth + 1)
             end
         end
@@ -751,8 +746,7 @@ local function parseField(buf, offset, isbe, tree, depth)
         if offset < buf:len() then
             -- Read 16-bit cache key
             local cache_key = isbe and buf(offset, 2):uint() or buf(offset, 2):le_uint()
-            if field_tree then field_tree:append_text(string.format(" (cache fetch, key: %d)", cache_key)) end
-            if field_tree then field_tree:add(buf(offset, 2), string.format("Cache Key: %d", cache_key)) end
+            if field_tree then field_tree:set_text(string.format("Cache Fetch %d", cache_key)) end
             offset = offset + 2
         end
 
@@ -1713,7 +1707,11 @@ function decodePVData(buf, pkt, t, isbe, label)
     -- Parse first byte (type)
     local first_byte = buf(0, 1):uint()
     local type_name = PVD_TYPES[first_byte] or "unknown"
-    pvd_tree:append_text(string.format(" [Type: %s (0x%02X)]", type_name, first_byte))
+    
+    -- Only show type info for non-cache types
+    if first_byte ~= CACHE_STORE_CODE and first_byte ~= CACHE_FETCH_CODE then
+        pvd_tree:append_text(string.format(" [Type: %s (0x%02X)]", type_name, first_byte))
+    end
 
     local offset = 1
     local main_field_info = nil
@@ -1722,13 +1720,11 @@ function decodePVData(buf, pkt, t, isbe, label)
         if offset + 1 < buf:len() then
             -- Read 16-bit cache key
             local cache_key = isbe and buf(offset, 2):uint() or buf(offset, 2):le_uint()
-            pvd_tree:append_text(string.format(" (cache store, key: %d)", cache_key))
-            pvd_tree:add(buf(offset, 2), string.format("Cache Key: %d", cache_key))
+            pvd_tree:set_text(string.format("Cache Store %d", cache_key))
             offset = offset + 2
             
             -- Parse the following FieldDesc tree
             if offset < buf:len() then
-                pvd_tree:append_text(" -> storing:")
                 -- Parse the FieldDesc tree starting from current offset
                 -- Check if the next byte is a structure type (0x80)
                 if offset < buf:len() then
@@ -1766,11 +1762,10 @@ function decodePVData(buf, pkt, t, isbe, label)
                                 if field_type == CACHE_STORE_CODE then
                                     -- Handle nested cache store
                                     offset = offset + 1  -- Skip 0xFD
-                                    if offset + 1 < buf:len() then
-                                        local nested_cache_key = isbe and buf(offset, 2):uint() or buf(offset, 2):le_uint()
-                                        local cache_tree = pvd_tree:add(buf(offset - 1, 3), string.format("Nested Cache Store (key: %d)", nested_cache_key))
-                                        cache_tree:add(buf(offset, 2), string.format("Cache Key: %d", nested_cache_key))
-                                        offset = offset + 2
+                                                                         if offset + 1 < buf:len() then
+                                         local nested_cache_key = isbe and buf(offset, 2):uint() or buf(offset, 2):le_uint()
+                                         local cache_tree = pvd_tree:add(buf(offset - 1, 3), string.format("Cache Store %d", nested_cache_key))
+                                         offset = offset + 2
                                         
                                         -- Parse the nested structure
                                         if offset < buf:len() and buf(offset, 1):uint() == TYPE_CODE_STRUCT then
@@ -1823,8 +1818,7 @@ function decodePVData(buf, pkt, t, isbe, label)
         if offset + 1 < buf:len() then
             -- Read 16-bit cache key
             local cache_key = isbe and buf(offset, 2):uint() or buf(offset, 2):le_uint()
-            pvd_tree:append_text(string.format(" (cache fetch, key: %d)", cache_key))
-            pvd_tree:add(buf(offset, 2), string.format("Cache Key: %d", cache_key))
+            pvd_tree:set_text(string.format("Cache Fetch %d", cache_key))
             return pvd_tree
         end
 
