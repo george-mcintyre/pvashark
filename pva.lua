@@ -44,6 +44,7 @@ local bctrlcommands = {
     [2] = "SET_BYTE_ORDER",
 }
 
+-- statys codes
 local stscodes = {
     [0xff] = "OK",
     [0] = "OK",
@@ -66,7 +67,7 @@ local TYPE_CODE_UINT = 0x26;
 local TYPE_CODE_ULONG = 0x27;
 
 local TYPE_CODE_FLOAT = 0x42;
-local TYPE_CODE_DOUBLE = 0x43; 
+local TYPE_CODE_DOUBLE = 0x43;
 
 local TYPE_CODE_STRING = 0x60;
 
@@ -88,7 +89,7 @@ local TYPE_CODE_UINT_ARRAY = 0x2E;
 local TYPE_CODE_ULONG_ARRAY = 0x2F;
 
 local TYPE_CODE_FLOAT_ARRAY = 0x4A;
-local TYPE_CODE_DOUBLE_ARRAY = 0x4B; 
+local TYPE_CODE_DOUBLE_ARRAY = 0x4B;
 
 local TYPE_CODE_STRING_ARRAY = 0x68;
 
@@ -108,12 +109,12 @@ local TYPE_CODE_INTROSPECTION_ONLY = 0x01;
 local PVD_TYPES = {
     [TYPE_CODE_BOOLEAN] = "bool",
     [TYPE_CODE_BYTE] = "int8_t",
-    [TYPE_CODE_SHORT] = "int16_t", 
+    [TYPE_CODE_SHORT] = "int16_t",
     [TYPE_CODE_INT] = "int32_t",
     [TYPE_CODE_LONG] = "int64_t",
     [TYPE_CODE_UBYTE] = "uint8_t",
     [TYPE_CODE_USHORT] = "uint16_t",
-    [TYPE_CODE_UINT] = "uint32_t", 
+    [TYPE_CODE_UINT] = "uint32_t",
     [TYPE_CODE_ULONG] = "uint64_t",
     [TYPE_CODE_FLOAT] = "float",
     [TYPE_CODE_DOUBLE] = "double",
@@ -121,7 +122,7 @@ local PVD_TYPES = {
     [TYPE_CODE_STRUCT] = "struct",
     [TYPE_CODE_UNION] = "union",
     [TYPE_CODE_ANY] = "any",
-    
+
     -- Array types
     [TYPE_CODE_BOOLEAN_ARRAY] = "bool[]",
     [TYPE_CODE_BYTE_ARRAY] = "int8_t[]",
@@ -138,10 +139,10 @@ local PVD_TYPES = {
     [TYPE_CODE_STRUCT_ARRAY] = "struct[]",
     [TYPE_CODE_UNION_ARRAY] = "union[]",
     [TYPE_CODE_ANY_ARRAY] = "any[]",
-    
+
     -- Special/cache codes
     [CACHE_STORE_CODE] = "cache_store",
-    [CACHE_FETCH_CODE] = "cache_fetch", 
+    [CACHE_FETCH_CODE] = "cache_fetch",
     [TYPE_CODE_NULL] = "null",
     [TYPE_CODE_INTROSPECTION_ONLY] = "introspectionOnly"
 }
@@ -1071,7 +1072,7 @@ local function pva_server_op (buf, pkt, t, isbe, cmd)
         -- monitor updates have no status
         buf = decodeStatus(buf(0), pkt, t, isbe)
     end
-    
+
     if buf and buf:len()>0 then
         -- Special handling for MONITOR-INIT messages
         if cmd == 13 and bit.band(subcmd, 0x08) == 0 then -- MONITOR with INIT flag
@@ -1146,28 +1147,28 @@ local function parseStructDesc(buf, offset, isbe, tree, type_code)
         -- Extract clean type name
         clean_name = type_id:match("([^:]+)") or type_id
     end
-    
+
     -- Update tree display name
     tree:set_text(string.format("(0x%02X: %s)", type_code, clean_name))
-    
+
     -- Read field count
     local field_count, count_offset = readPVSize(buf, offset, isbe)
     offset = count_offset
-    
+
     -- Parse each field: name + FieldDesc
     for i = 1, math.min(field_count, 20) do -- Limit to prevent runaway
         if offset >= buf:len() then break end
-        
+
         local field_name, name_offset = readPVString(buf, offset, isbe)
         offset = name_offset
-        
+
         offset = parseFieldDesc(buf, offset, isbe, tree, field_name)
     end
-    
+
     return offset
 end
 
--- Parse union FieldDesc: Type ID + field count + fields  
+-- Parse union FieldDesc: Type ID + field count + fields
 local function parseUnionDesc(buf, offset, isbe, tree, type_code)
     -- Read optional Type ID string
     local type_id, type_id_offset = readPVString(buf, offset, isbe)
@@ -1176,24 +1177,24 @@ local function parseUnionDesc(buf, offset, isbe, tree, type_code)
         offset = type_id_offset
         clean_name = type_id:match("([^:]+)") or type_id
     end
-    
+
     -- Update tree display name
     tree:set_text(string.format("(0x%02X: %s)", type_code, clean_name))
-    
+
     -- Read field count
     local field_count, count_offset = readPVSize(buf, offset, isbe)
     offset = count_offset
-    
+
     -- Parse each field: name + FieldDesc
     for i = 1, math.min(field_count, 20) do
         if offset >= buf:len() then break end
-        
+
         local field_name, name_offset = readPVString(buf, offset, isbe)
         offset = name_offset
-        
+
         offset = parseFieldDesc(buf, offset, isbe, tree, field_name)
     end
-    
+
     return offset
 end
 
@@ -1203,7 +1204,7 @@ local function parseCacheStore(buf, offset, isbe, tree)
         local cache_key = isbe and buf(offset, 2):uint() or buf(offset, 2):le_uint()
         tree:set_text(string.format("Cache Store %d", cache_key))
         offset = offset + 2
-        
+
         -- Parse the stored FieldDesc
         offset = parseFieldDesc(buf, offset, isbe, tree, nil)
     end
@@ -1225,16 +1226,16 @@ parseFieldDesc = function(buf, offset, isbe, tree, field_name)
     if not buf or offset >= buf:len() then
         return offset
     end
-    
+
     local type_code = buf(offset, 1):uint()
     local type_name = PVD_TYPES[type_code] or string.format("unknown(0x%02X)", type_code)
     offset = offset + 1
-    
+
     -- Create field display with standard format: fieldname (0xHH: typename)
-    local display_name = field_name and string.format("%s (0x%02X: %s)", field_name, type_code, type_name) 
+    local display_name = field_name and string.format("%s (0x%02X: %s)", field_name, type_code, type_name)
                          or string.format("(0x%02X: %s)", type_code, type_name)
     local field_tree = tree:add(buf(offset - 1, 1), display_name)
-    
+
     -- Handle TypeCode-specific parsing
     if type_code == TYPE_CODE_STRUCT then
         offset = parseStructDesc(buf, offset, isbe, field_tree, type_code)
@@ -1246,7 +1247,7 @@ parseFieldDesc = function(buf, offset, isbe, tree, field_name)
         offset = parseCacheFetch(buf, offset, isbe, field_tree)
     -- All other types (scalars, arrays) are just TypeCode - no additional data
     end
-    
+
     return offset
 end
 
@@ -1258,9 +1259,9 @@ local function parseMonitorInit(buf, pkt, t, isbe)
     if not buf or buf:len() == 0 then
         return
     end
-    
+
     local offset = 0
-    
+
     -- Parse ChangedBitSet
     if offset < buf:len() then
         local bitset_byte = buf(offset, 1):uint()
@@ -1274,7 +1275,7 @@ local function parseMonitorInit(buf, pkt, t, isbe)
         t:add(buf(offset, 1), string.format("ChangedBitSet: 0x%02X (bits: %s)", bitset_byte, bits_str))
         offset = offset + 1
     end
-    
+
     -- Parse Type ID string
     if offset < buf:len() then
         local type_id, type_id_offset = readPVString(buf, offset, isbe)
@@ -1283,24 +1284,24 @@ local function parseMonitorInit(buf, pkt, t, isbe)
             offset = type_id_offset
         end
     end
-    
+
     -- Parse FieldDesc structure (starts with field count, not TypeCode)
     if offset < buf:len() then
         local field_count, count_offset = readPVSize(buf, offset, isbe)
         t:add(buf(offset, count_offset - offset), string.format("Field Count: %d", field_count))
         offset = count_offset
-        
+
         -- Parse each field using unified system
         for i = 1, math.min(field_count, 10) do
             if offset >= buf:len() then break end
-            
+
             local field_name, name_offset = readPVString(buf, offset, isbe)
             if not field_name then break end
             offset = name_offset
-            
+
             offset = parseFieldDesc(buf, offset, isbe, t, field_name)
         end
-        
+
         -- Show remaining data if any
         if offset < buf:len() then
             t:add(buf(offset), string.format("Remaining data (%d bytes)", buf:len() - offset))
@@ -1309,7 +1310,7 @@ local function parseMonitorInit(buf, pkt, t, isbe)
 end
 
 -- ===================================================================
--- SIMPLIFIED PVDATA DECODER (replaces the massive decodePVData)
+-- SIMPLIFIED PVDATA DECODER
 -- ===================================================================
 
 function decodePVData(buf, pkt, t, isbe, label)
@@ -1318,7 +1319,7 @@ function decodePVData(buf, pkt, t, isbe, label)
     end
 
     local pvd_tree = t:add(placeholder, label or "PVData Body")
-    
+
     if buf:len() == 0 then
         pvd_tree:append_text(" [Empty]")
         return pvd_tree
@@ -1326,7 +1327,7 @@ function decodePVData(buf, pkt, t, isbe, label)
 
     -- Simple unified parsing - just parse the FieldDesc at the start
     parseFieldDesc(buf, 0, isbe, pvd_tree, "value")
-    
+
     return pvd_tree
 end
 
