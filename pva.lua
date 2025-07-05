@@ -8,31 +8,55 @@
 --
 io.stderr:write("Loading PVA...\n")
 
+local BEACON_MESSAGE = 0
+local CONNECTION_VALIDATION_MESSAGE = 1
+local ECHO_MESSAGE = 2
+local SEARCH_MESSAGE = 3
+local SEARCH_RESPONSE_MESSAGE = 4
+local AUTHNZ_MESSAGE = 5
+local ACL_CHANGE_MESSAGE = 6
+local CREATE_CHANNEL_MESSAGE = 7
+local DESTROY_CHANNEL_MESSAGE = 8
+local CONNECTION_VALIDATED_MESSAGE = 9
+local GET_MESSAGE = 10
+local PUT_MESSAGE = 11
+local PUT_GET_MESSAGE = 12
+local MONITOR_MESSAGE = 13
+local ARRAY_MESSAGE = 14
+local DESTROY_REQUEST_MESSAGE = 15
+local PROCESS_MESSAGE = 16
+local GET_FIELD_MESSAGE = 17
+local MESSAGE_MESSAGE = 18
+local MULTIPLE_DATA_MESSAGE = 19
+local RPC_MESSAGE = 20
+local CANCEL_REQUEST_MESSAGE = 21
+local ORIGIN_TAG_MESSAGE = 22
+
 -- application messages
 local application_messages = {
-    [0]  = "BEACON",
-    [1]  = "CONNECTION_VALIDATION",
-    [2]  = "ECHO",
-    [3]  = "SEARCH",
-    [4]  = "SEARCH_RESPONSE",
-    [5]  = "AUTHNZ",
-    [6]  = "ACL_CHANGE",
-    [7]  = "CREATE_CHANNEL",
-    [8]  = "DESTROY_CHANNEL",
-    [9]  = "CONNECTION_VALIDATED",
-    [10] = "GET",
-    [11] = "PUT",
-    [12] = "PUT_GET",
-    [13] = "MONITOR",
-    [14] = "ARRAY",
-    [15] = "DESTROY_REQUEST",
-    [16] = "PROCESS",
-    [17] = "GET_FIELD",
-    [18] = "MESSAGE",
-    [19] = "MULTIPLE_DATA",
-    [20] = "RPC",
-    [21] = "CANCEL_REQUEST",
-    [22] = "ORIGIN_TAG",
+    [BEACON_MESSAGE]  = "BEACON",
+    [CONNECTION_VALIDATION_MESSAGE]  = "CONNECTION_VALIDATION",
+    [ECHO_MESSAGE]  = "ECHO",
+    [SEARCH_MESSAGE]  = "SEARCH",
+    [SEARCH_RESPONSE_MESSAGE]  = "SEARCH_RESPONSE",
+    [AUTHNZ_MESSAGE]  = "AUTHNZ",
+    [ACL_CHANGE_MESSAGE]  = "ACL_CHANGE",
+    [CREATE_CHANNEL_MESSAGE]  = "CREATE_CHANNEL",
+    [DESTROY_CHANNEL_MESSAGE]  = "DESTROY_CHANNEL",
+    [CONNECTION_VALIDATED_MESSAGE]  = "CONNECTION_VALIDATED",
+    [GET_MESSAGE] = "GET",
+    [PUT_MESSAGE] = "PUT",
+    [PUT_GET_MESSAGE] = "PUT_GET",
+    [MONITOR_MESSAGE] = "MONITOR",
+    [ARRAY_MESSAGE] = "ARRAY",
+    [DESTROY_REQUEST_MESSAGE] = "DESTROY_REQUEST",
+    [PROCESS_MESSAGE] = "PROCESS",
+    [GET_FIELD_MESSAGE] = "GET_FIELD",
+    [MESSAGE_MESSAGE] = "MESSAGE",
+    [MULTIPLE_DATA_MESSAGE] = "MULTIPLE_DATA",
+    [RPC_MESSAGE] = "RPC",
+    [CANCEL_REQUEST_MESSAGE] = "CANCEL_REQUEST",
+    [ORIGIN_TAG_MESSAGE] = "ORIGIN_TAG",
 }
 
 -- control messages
@@ -524,25 +548,31 @@ if not status then
     print(err)
 end
 
-local function decodeStatus (buf, pkt, t, is_big_endian)
-    local code = buf(0,1):uint()
-    local subt = t:add(fstatus, buf(0,1))
-    if buf:len()>1 then
-        buf = buf(1):tvb()
+----------------------------------------------
+-- decodeStatus: decode the given message body to extract the status
+-- @param message_body: the buffer to decode from
+-- @param tree: the tree node to decode into
+-- @param is_big_endian is the byte stream big endian
+----------------------------------------------
+local function decodeStatus (message_body, tree, is_big_endian)
+    local status_code = message_body(0,1):uint()
+    local sub_tree = tree:add(fstatus, message_body(0,1))
+    if message_body:len()>1 then
+        message_body = message_body(1):tvb()
     end
-    if code==0xff
-    then
-        return buf
+
+    if status_code ==0xFF then
+        return message_body
     else
         local message, stack
-        message, buf = decodeString(buf, is_big_endian)
-        stack, buf = decodeString(buf, is_big_endian)
-        subt:append_text(message:string())
-        if(code~=0 and stack:len()>0)
+        message, message_body = decodeString(message_body, is_big_endian)
+        stack, message_body = decodeString(message_body, is_big_endian)
+        sub_tree:append_text(message:string())
+        if(status_code ~=0 and stack:len()>0)
         then
-            subt:add_expert_info(PI_RESPONSE_CODE, PI_WARN, stack:string())
+            sub_tree:add_expert_info(PI_RESPONSE_CODE, PI_WARN, stack:string())
         end
-        return buf
+        return message_body
     end
 end
 
@@ -1060,172 +1090,177 @@ local function pvsServerValidateDecoder (message_body, pkt, tree, is_big_endian)
     end
 end
 
-local function pvaClientCreateChannelDecoder (buf, pkt, t, is_big_endian, cmd)
+----------------------------------------------
+-- pvaClientCreateChannelDecoder: decode the given message body into the given packet and root tree node
+-- @param message_body: the buffer to decode from
+-- @param pkt: the packet to decode into
+-- @param tree: the tree node to decode into
+-- @param is_big_endian is the byte stream big endian
+----------------------------------------------
+local function pvaClientCreateChannelDecoder (message_body, pkt, tree, is_big_endian)
     pkt.cols.info:append("CREATE_CHANNEL(")
-    local npv
-    if is_big_endian then
-        npv = buf(0,2):uint()
-    else
-        npv = buf(0,2):le_uint()
-    end
-    buf = buf(2)
+    local n_pvs = getUint(message_body(0,2), is_big_endian)
+    message_body = message_body(2)
 
-    for i=0,npv-1 do
-        local cid, name
-        if is_big_endian then
-            cid = buf(0,4):uint()
-        else
-            cid = buf(0,4):le_uint()
-        end
-        t:add(fsearch_cid, buf(0,4), cid)
-        name, buf = decodeString(buf(4), is_big_endian)
-        t:add(fsearch_name, name)
-
-        if i<npv-1 then pkt.cols.info:append("', '") end
+    for i=0, n_pvs -1 do
+        local cid = getUint(message_body(0,4), is_big_endian)
+        tree:add(fsearch_cid, message_body(0,4), cid)
+        local name
+        name, message_body = decodeString(message_body(4), is_big_endian)
+        tree:add(fsearch_name, name)
+        if i< n_pvs -1 then pkt.cols.info:append("', '") end
         pkt.cols.info:append("'"..name:string())
     end
     pkt.cols.info:append("'), ")
 end
 
-local function pvaServerCreateChannelDecoder (buf, pkt, t, is_big_endian, cmd)
-    local cid, sid
-    if is_big_endian
-    then
-        cid = buf(0,4):uint()
-        sid = buf(4,4):uint()
-    else
-        cid = buf(0,4):le_uint()
-        sid = buf(4,4):le_uint()
-    end
+----------------------------------------------
+-- pvaServerCreateChannelDecoder: decode the given message body into the given packet and root tree node
+-- @param message_body: the buffer to decode from
+-- @param pkt: the packet to decode into
+-- @param tree: the tree node to decode into
+-- @param is_big_endian is the byte stream big endian
+----------------------------------------------
+local function pvaServerCreateChannelDecoder (message_body, pkt, tree, is_big_endian)
+    local cid = getUint(message_body(0,4), is_big_endian)
+    local sid = getUint(message_body(4,4), is_big_endian)
     pkt.cols.info:append("CREATE_CHANNEL(cid="..cid..", sid="..sid.."), ")
-    t:add(fcid, buf(0,4), cid)
-    t:add(fsid, buf(4,4), sid)
-    decodeStatus(buf(8), pkt, t, is_big_endian)
+    tree:add(fcid, message_body(0,4), cid)
+    tree:add(fsid, message_body(4,4), sid)
+    decodeStatus(message_body(8), tree, is_big_endian)
 end
 
-local function pvaDestroyChannelDecoder (buf, pkt, t, is_big_endian, cmd)
-    local cid, sid
-    if is_big_endian
-    then
-        sid = buf(0,4):uint()
-        cid = buf(4,4):uint()
-    else
-        sid = buf(0,4):le_uint()
-        cid = buf(4,4):le_uint()
-    end
+----------------------------------------------
+-- pvaDestroyChannelDecoder: decode the given message body into the given packet and root tree node
+-- @param message_body: the buffer to decode from
+-- @param pkt: the packet to decode into
+-- @param tree: the tree node to decode into
+-- @param is_big_endian is the byte stream big endian
+-- @param cmd the command number
+----------------------------------------------
+local function pvaDestroyChannelDecoder (message_body, pkt, tree, is_big_endian, cmd)
+    local cid getUint(message_body(0,4), is_big_endian)
+    local sid getUint(message_body(4,4), is_big_endian)
     pkt.cols.info:append("DESTROY_CHANNEL(cid="..cid..", sid="..sid.."), ")
-    t:add(fsid, buf(0,4), sid)
-    t:add(fcid, buf(4,4), cid)
+    tree:add(fsid, message_body(0,4), sid)
+    tree:add(fcid, message_body(4,4), cid)
 end
 
-local function pvaClientDestroyDecoder (buf, pkt, t, is_big_endian, cmd)
-    local cname = application_messages[cmd]
-    local sid, ioid;
-    if is_big_endian
-    then
-        sid = buf(0,4):uint()
-        ioid = buf(4,4):uint()
-    else
-        sid = buf(0,4):le_uint()
-        ioid = buf(4,4):le_uint()
-    end
-    t:add(fsid, buf(0,4), sid)
-    t:add(fioid, buf(4,4), ioid)
-
-    pkt.cols.info:append(string.format("%s(sid=%u, ioid=%u), ", cname, sid, ioid))
+----------------------------------------------
+-- pvaClientDestroyDecoder: decode the given message body into the given packet and root tree node
+-- @param message_body: the buffer to decode from
+-- @param pkt: the packet to decode into
+-- @param tree: the tree node to decode into
+-- @param is_big_endian is the byte stream big endian
+-- @param cmd the command number
+----------------------------------------------
+local function pvaClientDestroyDecoder (message_body, pkt, tree, is_big_endian, cmd)
+    local command_name = application_messages[cmd]
+    local sid = getUint(message_body(0,4), is_big_endian)
+    local ioid = getUint(message_body(4,4), is_big_endian)
+    tree:add(fsid, message_body(0,4), sid)
+    tree:add(fioid, message_body(4,4), ioid)
+    pkt.cols.info:append(string.format("%s(sid=%u, ioid=%u), ", command_name, sid, ioid))
 end
 
-local function pvaGenericClientOpDecoder (buf, pkt, t, is_big_endian, cmd)
+----------------------------------------------
+-- pvaGenericClientOpDecoder: decode the given message body into the given packet and root tree node
+-- @param message_body: the buffer to decode from
+-- @param pkt: the packet to decode into
+-- @param tree: the tree node to decode into
+-- @param is_big_endian is the byte stream big endian
+-- @param cmd the command number
+----------------------------------------------
+local function pvaGenericClientOpDecoder (message_body, pkt, tree, is_big_endian, cmd)
+    local GENERIC_COMMAND_HEADER = 9
     local cname = application_messages[cmd]
-    local sid, ioid, subcmd
-    if is_big_endian
-    then
-        sid = buf(0,4):uint()
-        ioid = buf(4,4):uint()
-    else
-        sid = buf(0,4):le_uint()
-        ioid = buf(4,4):le_uint()
-    end
-    subcmd = buf(8,1):uint()
-    t:add(fsid, buf(0,4), sid)
-    t:add(fioid, buf(4,4), ioid)
-    local cmd = t:add(fsubcmd, buf(8,1), subcmd)
-    cmd:add(fsubcmd_proc, buf(8,1), subcmd)
-    cmd:add(fsubcmd_init, buf(8,1), subcmd)
-    cmd:add(fsubcmd_dstr, buf(8,1), subcmd)
-    cmd:add(fsubcmd_get, buf(8,1), subcmd)
-    cmd:add(fsubcmd_gtpt, buf(8,1), subcmd)
-    if buf:len()>9 then
-        decodePVData(buf(9):tvb(), pkt, t, is_big_endian, "PVData Body")
+    local sid = getUint(message_body(0,4), is_big_endian)
+    local ioid = getUint(message_body(4,4), is_big_endian)
+    local raw_sub_command = message_body(8,1)
+    local sub_command = raw_sub_command:uint()
+    tree:add(fsid, message_body(0,4), sid)
+    tree:add(fioid, message_body(4,4), ioid)
+    local sub_tree = tree:add(fsubcmd, message_body(8,1), sub_command)
+    sub_tree:add(fsubcmd_proc, raw_sub_command, sub_command)
+    sub_tree:add(fsubcmd_init, raw_sub_command, sub_command)
+    sub_tree:add(fsubcmd_dstr, raw_sub_command, sub_command)
+    sub_tree:add(fsubcmd_get,  raw_sub_command, sub_command)
+    sub_tree:add(fsubcmd_gtpt, raw_sub_command, sub_command)
+    if message_body:len()>GENERIC_COMMAND_HEADER then
+        decodePVData(message_body(GENERIC_COMMAND_HEADER):tvb(), pkt, tree, is_big_endian, "PVData Body")
     end
 
-    pkt.cols.info:append(string.format("%s(sid=%u, ioid=%u, sub=%02x), ", cname, sid, ioid, subcmd))
+    pkt.cols.info:append(string.format("%s(sid=%u, ioid=%u, sub=%02x), ", cname, sid, ioid, sub_command))
 end
 
 
-local function pvaGenericServerOpDecoder (buf, pkt, t, is_big_endian, cmd)
+----------------------------------------------
+-- pvaServerBeaconDecoder: decode the given message body into the given packet and root tree node
+-- @param message_body: the buffer to decode from
+-- @param pkt: the packet to decode into
+-- @param tree: the tree node to decode into
+-- @param is_big_endian is the byte stream big endian
+-- @param cmd the command number
+----------------------------------------------
+local function pvaGenericServerOpDecoder (message_body, pkt, tree, is_big_endian, cmd)
+    local GENERIC_COMMAND_HEADER = 5
     local cname = application_messages[cmd]
-    local ioid, subcmd
-    if is_big_endian
-    then
-        ioid = buf(0,4):uint()
-    else
-        ioid = buf(0,4):le_uint()
-    end
-    subcmd = buf(4,1):uint()
-    t:add(fioid, buf(0,4), ioid)
-    local tcmd = t:add(fsubcmd, buf(4,1), subcmd)
-    tcmd:add(fsubcmd_proc, buf(4,1), subcmd)
-    tcmd:add(fsubcmd_init, buf(4,1), subcmd)
-    tcmd:add(fsubcmd_dstr, buf(4,1), subcmd)
-    tcmd:add(fsubcmd_get, buf(4,1), subcmd)
-    tcmd:add(fsubcmd_gtpt, buf(4,1), subcmd)
-    buf = buf(5):tvb()
+    local ioid = getUint(message_body(0,4), is_big_endian)
+    local raw_sub_command = message_body(4,1)
+    local sub_command = raw_sub_command:uint()
+    tree:add(fioid, message_body(0,4), ioid)
+    local sub_tree = tree:add(fsubcmd, raw_sub_command, sub_command)
+    sub_tree:add(fsubcmd_proc, raw_sub_command, sub_command)
+    sub_tree:add(fsubcmd_init, raw_sub_command, sub_command)
+    sub_tree:add(fsubcmd_dstr, raw_sub_command, sub_command)
+    sub_tree:add(fsubcmd_get, raw_sub_command, sub_command)
+    sub_tree:add(fsubcmd_gtpt, raw_sub_command, sub_command)
+    message_body = message_body(GENERIC_COMMAND_HEADER):tvb()
 
-    if cmd~=13 or bit.band(subcmd,0x08)~=0 then
+    if cmd~=13 or bit.band(sub_command,0x08)~=0 then
         -- monitor updates have no status
-        buf = decodeStatus(buf(0), pkt, t, is_big_endian)
+        message_body = decodeStatus(message_body(0), tree, is_big_endian)
     end
 
-    if buf and buf:len()>0 then
+    if message_body and message_body:len()>0 then
         -- Special handling for MONITOR-INIT messages
-        if cmd == 13 and bit.band(subcmd, 0x08) == 0 then -- MONITOR with INIT flag
-            parseMonitorInit(buf, pkt, t, is_big_endian)
+        if cmd == MONITOR_MESSAGE and bit.band(sub_command, 0x08) == 0 then -- MONITOR with INIT flag
+            parseMonitorInit(message_body, pkt, tree, is_big_endian)
         else
-            decodePVData(buf, pkt, t, is_big_endian, "PVData Body")
+            decodePVData(message_body, pkt, tree, is_big_endian, "PVData Body")
         end
     end
 
-    pkt.cols.info:append(string.format("%s(ioid=%u, sub=%02x), ", cname, ioid, subcmd))
+    pkt.cols.info:append(string.format("%s(ioid=%u, sub=%02x), ", cname, ioid, sub_command))
 end
 
 local server_cmd_handler = {
-    [0] = pvaServerBeaconDecoder,
-    [1] = pvsServerValidateDecoder,
-    [4] = pvaServerSearchResponseDecoder,
-    [7] = pvaServerCreateChannelDecoder,
-    [8] = pvaDestroyChannelDecoder,
-    [10] = pvaGenericServerOpDecoder,
-    [11] = pvaGenericServerOpDecoder,
-    [12] = pvaGenericServerOpDecoder,
-    [13] = pvaGenericServerOpDecoder,
-    [14] = pvaGenericServerOpDecoder,
-    [20] = pvaGenericServerOpDecoder,
+    [BEACON_MESSAGE] = pvaServerBeaconDecoder,
+    [CONNECTION_VALIDATION_MESSAGE] = pvsServerValidateDecoder,
+    [SEARCH_RESPONSE_MESSAGE] = pvaServerSearchResponseDecoder,
+    [CREATE_CHANNEL_MESSAGE] = pvaServerCreateChannelDecoder,
+    [DESTROY_CHANNEL_MESSAGE] = pvaDestroyChannelDecoder,
+    [GET_MESSAGE] = pvaGenericServerOpDecoder,
+    [PUT_MESSAGE] = pvaGenericServerOpDecoder,
+    [PUT_GET_MESSAGE] = pvaGenericServerOpDecoder,
+    [MONITOR_MESSAGE] = pvaGenericServerOpDecoder,
+    [ARRAY_MESSAGE] = pvaGenericServerOpDecoder,
+    [RPC_MESSAGE] = pvaGenericServerOpDecoder,
 }
 
 local client_cmd_handler = {
-    [1] = pvaClientValidateDecoder,
-    [3] = pvaClientSearchDecoder,
-    [7] = pvaClientCreateChannelDecoder,
-    [8] = pvaDestroyChannelDecoder,
-    [10] = pvaGenericClientOpDecoder,
-    [11] = pvaGenericClientOpDecoder,
-    [12] = pvaGenericClientOpDecoder,
-    [13] = pvaGenericClientOpDecoder,
-    [14] = pvaGenericClientOpDecoder,
-    [15] = pvaClientDestroyDecoder,
-    [20] = pvaGenericClientOpDecoder,
-    [21] = pvaClientDestroyDecoder,
+    [CONNECTION_VALIDATION_MESSAGE] = pvaClientValidateDecoder,
+    [SEARCH_MESSAGE] = pvaClientSearchDecoder,
+    [CREATE_CHANNEL_MESSAGE] = pvaClientCreateChannelDecoder,
+    [DESTROY_CHANNEL_MESSAGE] = pvaDestroyChannelDecoder,
+    [GET_MESSAGE] = pvaGenericClientOpDecoder,
+    [PUT_MESSAGE] = pvaGenericClientOpDecoder,
+    [PUT_GET_MESSAGE] = pvaGenericClientOpDecoder,
+    [MONITOR_MESSAGE] = pvaGenericClientOpDecoder,
+    [ARRAY_MESSAGE] = pvaGenericClientOpDecoder,
+    [DESTROY_REQUEST_MESSAGE] = pvaClientDestroyDecoder,
+    [RPC_MESSAGE] = pvaGenericClientOpDecoder,
+    [CANCEL_REQUEST_MESSAGE] = pvaClientDestroyDecoder,
 }
 
 local PVA_MAGIC = 0xCA;
