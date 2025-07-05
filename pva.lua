@@ -50,6 +50,8 @@ local stscodes = {
     [1] = "Warning",
     [2] = "Error",
     [3] = "Fatal Error",
+}
+
 -- PVXS TypeCodes (from src/pvxs/data.h)
 local TYPE_CODE_BOOLEAN = 0x00;
 
@@ -102,6 +104,47 @@ local TYPE_CODE_NULL = 0xFF;
 -- Legacy codes (not in PVXS specification)
 local TYPE_CODE_INTROSPECTION_ONLY = 0x01;
 
+-- TypeCode to name mapping table
+local PVD_TYPES = {
+    [TYPE_CODE_BOOLEAN] = "bool",
+    [TYPE_CODE_BYTE] = "int8_t",
+    [TYPE_CODE_SHORT] = "int16_t", 
+    [TYPE_CODE_INT] = "int32_t",
+    [TYPE_CODE_LONG] = "int64_t",
+    [TYPE_CODE_UBYTE] = "uint8_t",
+    [TYPE_CODE_USHORT] = "uint16_t",
+    [TYPE_CODE_UINT] = "uint32_t", 
+    [TYPE_CODE_ULONG] = "uint64_t",
+    [TYPE_CODE_FLOAT] = "float",
+    [TYPE_CODE_DOUBLE] = "double",
+    [TYPE_CODE_STRING] = "string",
+    [TYPE_CODE_STRUCT] = "struct",
+    [TYPE_CODE_UNION] = "union",
+    [TYPE_CODE_ANY] = "any",
+    
+    -- Array types
+    [TYPE_CODE_BOOLEAN_ARRAY] = "bool[]",
+    [TYPE_CODE_BYTE_ARRAY] = "int8_t[]",
+    [TYPE_CODE_SHORT_ARRAY] = "int16_t[]",
+    [TYPE_CODE_INT_ARRAY] = "int32_t[]",
+    [TYPE_CODE_LONG_ARRAY] = "int64_t[]",
+    [TYPE_CODE_UBYTE_ARRAY] = "uint8_t[]",
+    [TYPE_CODE_USHORT_ARRAY] = "uint16_t[]",
+    [TYPE_CODE_UINT_ARRAY] = "uint32_t[]",
+    [TYPE_CODE_ULONG_ARRAY] = "uint64_t[]",
+    [TYPE_CODE_FLOAT_ARRAY] = "float[]",
+    [TYPE_CODE_DOUBLE_ARRAY] = "double[]",
+    [TYPE_CODE_STRING_ARRAY] = "string[]",
+    [TYPE_CODE_STRUCT_ARRAY] = "struct[]",
+    [TYPE_CODE_UNION_ARRAY] = "union[]",
+    [TYPE_CODE_ANY_ARRAY] = "any[]",
+    
+    -- Special/cache codes
+    [CACHE_STORE_CODE] = "cache_store",
+    [CACHE_FETCH_CODE] = "cache_fetch", 
+    [TYPE_CODE_NULL] = "null",
+    [TYPE_CODE_INTROSPECTION_ONLY] = "introspectionOnly"
+}
 
 local placeholder= ProtoField.bytes("pva.placeholder", " ")
 
