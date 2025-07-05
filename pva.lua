@@ -78,6 +78,21 @@ local status_codes = {
     [3]    = "Fatal Error",
 }
 
+local nt_types = {
+    "epics:nt/NTScalar:1.0", "NTScalar",
+    "epics:nt/NTScalarArray:1.0", "NTScalarArray",
+    "epics:nt/NTEnum:1.0", "NTEnum",
+    "epics:nt/NTMatrix:1.0", "NTMatrix",
+    "epics:nt/NTURI:1.0", "NTURI",
+    "epics:nt/NameValue:1.0", "NameValue",
+    "epics:nt/NTTable:1.0", "NTTable",
+    "epics:nt/NTAttribute:1.0", "NTAttribute",
+    "epics:nt/NTMultiChannel:1.0", "NTMultiChannel",
+    "epics:nt/NTNDArray:1.0", "NTNDArray",
+    "epics:nt/NTHistogram:1.0", "NTHistogram",
+    "epics:nt/NTAggregate:1.0", "NTAggregate",
+}
+
 ----------------------------------------------
 -- Simple TypeCodes
 ----------------------------------------------
@@ -323,6 +338,18 @@ local function getUint(src, is_big_endian)
     else
         return src:le_uint()
     end
+end
+
+-- Parse Type ID string
+local function getTypeId(message_body, tree, is_big_endian)
+    if message_body:len() > 0 then
+        local type_id, remaining_buf = decodeString(message_body, is_big_endian, false)
+        if type_id and type_id:len() > 0 then
+            tree:add(type_id, string.format("Type ID: %s", type_id:string()))
+            message_body = remaining_buf
+        end
+    end
+    return type_id, message_body
 end
 
 ----------------------------------------------
@@ -685,7 +712,6 @@ local function parseMonitorInit(buf, pkt, t, is_big_endian)
     if buf and buf:len() > 0 then
         local field_count, remaining_buf = decodeSize(buf, is_big_endian, false)
         if field_count then
-            t:add(string.format("Field Count: %d", field_count))
             buf = remaining_buf
 
             if field_count > 0 then
