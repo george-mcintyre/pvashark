@@ -59,6 +59,50 @@ local application_messages = {
     [ORIGIN_TAG_MESSAGE] = "ORIGIN_TAG",
 }
 
+local pvaClientCreateChannelDecoder
+local pvaClientDestroyDecoder
+local pvaClientSearchDecoder
+local pvaClientValidateDecoder
+local pvaDestroyChannelDecoder
+local pvaGenericClientOpDecoder
+local pvaGenericServerOpDecoder
+local pvaServerBeaconDecoder
+local pvaServerCreateChannelDecoder
+local pvaServerSearchResponseDecoder
+local pvsServerValidateDecoder
+
+local server_cmd_handler = {
+    [BEACON_MESSAGE] =                  pvaServerBeaconDecoder,
+    [CONNECTION_VALIDATION_MESSAGE] =   pvsServerValidateDecoder,
+    [SEARCH_RESPONSE_MESSAGE] =         pvaServerSearchResponseDecoder,
+    [CREATE_CHANNEL_MESSAGE] =          pvaServerCreateChannelDecoder,
+    [DESTROY_CHANNEL_MESSAGE] =         pvaDestroyChannelDecoder,
+    [GET_MESSAGE] =                     pvaGenericServerOpDecoder,
+    [PUT_MESSAGE] =                     pvaGenericServerOpDecoder,
+    [PUT_GET_MESSAGE] =                 pvaGenericServerOpDecoder,
+    [MONITOR_MESSAGE] =                 pvaGenericServerOpDecoder,
+    [ARRAY_MESSAGE] =                   pvaGenericServerOpDecoder,
+    [RPC_MESSAGE] =                     pvaGenericServerOpDecoder,
+}
+
+local client_cmd_handler = {
+    [CONNECTION_VALIDATION_MESSAGE] =   pvaClientValidateDecoder,
+    [SEARCH_MESSAGE] =                  pvaClientSearchDecoder,
+    [CREATE_CHANNEL_MESSAGE] =          pvaClientCreateChannelDecoder,
+    [DESTROY_CHANNEL_MESSAGE] =         pvaDestroyChannelDecoder,
+    [GET_MESSAGE] =                     pvaGenericClientOpDecoder,
+    [PUT_MESSAGE] =                     pvaGenericClientOpDecoder,
+    [PUT_GET_MESSAGE] =                 pvaGenericClientOpDecoder,
+    [MONITOR_MESSAGE] =                 pvaGenericClientOpDecoder,
+    [ARRAY_MESSAGE] =                   pvaGenericClientOpDecoder,
+    [DESTROY_REQUEST_MESSAGE] =         pvaClientDestroyDecoder,
+    [RPC_MESSAGE] =                     pvaGenericClientOpDecoder,
+    [CANCEL_REQUEST_MESSAGE] =          pvaClientDestroyDecoder,
+}
+
+local PVA_MAGIC = 0xCA;
+local PVA_HEADER_LEN = 8;
+
 -- control messages
 local control_messages = {
     [0] = "MARK_TOTAL_BYTES_SENT",
@@ -772,7 +816,6 @@ function decodePVData(buf, pkt, t, is_big_endian, label)
         return pvd_tree
     end
 
-    -- Simple unified parsing - just parse the FieldDesc at the start
     parseFieldDesc(buf, 0, is_big_endian, pvd_tree, "value")
 
     return pvd_tree
@@ -1195,7 +1238,7 @@ end
 
 
 ----------------------------------------------
--- pvaServerBeaconDecoder: decode the given message body into the given packet and root tree node
+-- pvaGenericServerOpDecoder: decode the given message body into the given packet and root tree node
 -- @param message_body: the buffer to decode from
 -- @param pkt: the packet to decode into
 -- @param tree: the tree node to decode into
@@ -1208,6 +1251,8 @@ local function pvaGenericServerOpDecoder (message_body, pkt, tree, is_big_endian
     local ioid = getUint(message_body(0,4), is_big_endian)
     local raw_sub_command = message_body(4,1)
     local sub_command = raw_sub_command:uint()
+
+    -- Add fields to tree
     tree:add(fioid, message_body(0,4), ioid)
     local sub_tree = tree:add(fsubcmd, raw_sub_command, sub_command)
     sub_tree:add(fsubcmd_proc, raw_sub_command, sub_command)
@@ -1215,56 +1260,32 @@ local function pvaGenericServerOpDecoder (message_body, pkt, tree, is_big_endian
     sub_tree:add(fsubcmd_dstr, raw_sub_command, sub_command)
     sub_tree:add(fsubcmd_get, raw_sub_command, sub_command)
     sub_tree:add(fsubcmd_gtpt, raw_sub_command, sub_command)
+
+    -- Skip the header
     message_body = message_body(GENERIC_COMMAND_HEADER):tvb()
 
-    if cmd~=13 or bit.band(sub_command,0x08)~=0 then
-        -- monitor updates have no status
-        message_body = decodeStatus(message_body(0), tree, is_big_endian)
+    -- Define monitor-specific flags for clarity
+    local is_monitor_init = cmd == MONITOR_MESSAGE and bit.band(sub_command, 0x08) ~= 0
+    local is_monitor_update = cmd == MONITOR_MESSAGE and bit.band(sub_command, 0x08) == 0
+
+    -- Status handling: All messages except MONITOR UPDATE have status
+    if not is_monitor_update then
+        message_body = decodeStatus(message_body, tree, is_big_endian)
     end
 
-    if message_body and message_body:len()>0 then
-        -- Special handling for MONITOR-INIT messages
-        if cmd == MONITOR_MESSAGE and bit.band(sub_command, 0x08) == 0 then -- MONITOR with INIT flag
+    -- Process remaining payload
+    if message_body and message_body:len() > 0 then
+        if is_monitor_init then
+            -- MONITOR INIT: Contains type information after status
             parseMonitorInit(message_body, pkt, tree, is_big_endian)
         else
+            -- All other cases: Regular PVData
             decodePVData(message_body, pkt, tree, is_big_endian, "PVData Body")
         end
     end
 
     pkt.cols.info:append(string.format("%s(ioid=%u, sub=%02x), ", cname, ioid, sub_command))
 end
-
-local server_cmd_handler = {
-    [BEACON_MESSAGE] = pvaServerBeaconDecoder,
-    [CONNECTION_VALIDATION_MESSAGE] = pvsServerValidateDecoder,
-    [SEARCH_RESPONSE_MESSAGE] = pvaServerSearchResponseDecoder,
-    [CREATE_CHANNEL_MESSAGE] = pvaServerCreateChannelDecoder,
-    [DESTROY_CHANNEL_MESSAGE] = pvaDestroyChannelDecoder,
-    [GET_MESSAGE] = pvaGenericServerOpDecoder,
-    [PUT_MESSAGE] = pvaGenericServerOpDecoder,
-    [PUT_GET_MESSAGE] = pvaGenericServerOpDecoder,
-    [MONITOR_MESSAGE] = pvaGenericServerOpDecoder,
-    [ARRAY_MESSAGE] = pvaGenericServerOpDecoder,
-    [RPC_MESSAGE] = pvaGenericServerOpDecoder,
-}
-
-local client_cmd_handler = {
-    [CONNECTION_VALIDATION_MESSAGE] = pvaClientValidateDecoder,
-    [SEARCH_MESSAGE] = pvaClientSearchDecoder,
-    [CREATE_CHANNEL_MESSAGE] = pvaClientCreateChannelDecoder,
-    [DESTROY_CHANNEL_MESSAGE] = pvaDestroyChannelDecoder,
-    [GET_MESSAGE] = pvaGenericClientOpDecoder,
-    [PUT_MESSAGE] = pvaGenericClientOpDecoder,
-    [PUT_GET_MESSAGE] = pvaGenericClientOpDecoder,
-    [MONITOR_MESSAGE] = pvaGenericClientOpDecoder,
-    [ARRAY_MESSAGE] = pvaGenericClientOpDecoder,
-    [DESTROY_REQUEST_MESSAGE] = pvaClientDestroyDecoder,
-    [RPC_MESSAGE] = pvaGenericClientOpDecoder,
-    [CANCEL_REQUEST_MESSAGE] = pvaClientDestroyDecoder,
-}
-
-local PVA_MAGIC = 0xCA;
-local PVA_HEADER_LEN = 8;
 
 ----------------------------------------------
 -- decode: decode the given buffer into the given packet and root tree node
@@ -1380,9 +1401,9 @@ local function decode (buf, pkt, root)
 
         if is_big_endian
         then
-            header_tree_node:add(fbody, buf(8, message_len))
+            header_tree_node:add(fpvd, buf(8, message_len))
         else
-            header_tree_node:addle(fbody, buf(8, message_len))
+            header_tree_node:addle(fpvd, buf(8, message_len))
         end
     end
 
