@@ -8,23 +8,18 @@
 --
 io.stderr:write("Loading PVA...\n")
 
--- forward declarations
-local decodePVData
-
-local pva = Proto("pva", "Process Variable Access")
-
 -- application messages
-local bcommands = {
-    [0] = "BEACON",
-    [1] = "CONNECTION_VALIDATION",
-    [2] = "ECHO",
-    [3] = "SEARCH",
-    [4] = "SEARCH_RESPONSE",
-    [5] = "AUTHNZ",
-    [6] = "ACL_CHANGE",
-    [7] = "CREATE_CHANNEL",
-    [8] = "DESTROY_CHANNEL",
-    [9] = "CONNECTION_VALIDATED",
+local application_messages = {
+    [0]  = "BEACON",
+    [1]  = "CONNECTION_VALIDATION",
+    [2]  = "ECHO",
+    [3]  = "SEARCH",
+    [4]  = "SEARCH_RESPONSE",
+    [5]  = "AUTHNZ",
+    [6]  = "ACL_CHANGE",
+    [7]  = "CREATE_CHANNEL",
+    [8]  = "DESTROY_CHANNEL",
+    [9]  = "CONNECTION_VALIDATED",
     [10] = "GET",
     [11] = "PUT",
     [12] = "PUT_GET",
@@ -41,19 +36,19 @@ local bcommands = {
 }
 
 -- control messages
-local bctrlcommands = {
+local control_messages = {
     [0] = "MARK_TOTAL_BYTES_SENT",
     [1] = "ACK_TOTAL_BYTES_RECEIVED",
     [2] = "SET_BYTE_ORDER",
 }
 
 -- status codes
-local stscodes = {
+local status_codes = {
     [0xff] = "OK",
-    [0] = "OK",
-    [1] = "Warning",
-    [2] = "Error",
-    [3] = "Fatal Error",
+    [0]    = "OK",
+    [1]    = "Warning",
+    [2]    = "Error",
+    [3]    = "Fatal Error",
 }
 
 ----------------------------------------------
@@ -168,6 +163,8 @@ local PVD_TYPES = {
 -- ProtoFields
 ----------------------------------------------
 
+local pva = Proto("pva", "Process Variable Access")
+
 local placeholder   = ProtoField.bytes("pva.placeholder", " ")
 
 ----------------------------------------------
@@ -181,8 +178,8 @@ local fflag_dir     = ProtoField.uint8(     "pva.direction",    "Direction",    
 local fflag_end     = ProtoField.uint8(     "pva.endian",       "Byte order",       base.HEX, {[0]="LSB",[1]="MSB"}, 0x80)
 local fflag_msgtype = ProtoField.uint8(     "pva.msg_type",     "Message type",     base.HEX, {[0]="Application",[1]="Control"}, 0x01)
 local fflag_segmented = ProtoField.uint8(   "pva.segmented",    "Segmented",        base.HEX, {[0]="Not segmented",[1]="First segment",[2]="Last segment",[3]="In-the-middle segment"}, 0x30)
-local fcmd          = ProtoField.uint8(     "pva.command",      "Command",          base.HEX, bcommands)
-local fctrlcmd      = ProtoField.uint8(     "pva.ctrlcommand",  "Control Command",  base.HEX, bctrlcommands)
+local fcmd          = ProtoField.uint8(     "pva.command",      "Command",          base.HEX, application_messages)
+local fctrlcmd      = ProtoField.uint8(     "pva.ctrlcommand",  "Control Command",  base.HEX, control_messages)
 local fctrldata     = ProtoField.uint32(    "pva.ctrldata",     "Control Data",     base.HEX)
 local fsize         = ProtoField.uint32(    "pva.size",         "Size",             base.DEC)
 local fbody         = ProtoField.bytes(     "pva.body",         "Body")
@@ -214,7 +211,7 @@ local fsubcmd_init  = ProtoField.uint8(     "pva.init",         "Init   ",      
 local fsubcmd_dstr  = ProtoField.uint8(     "pva.destroy",      "Destroy",          base.HEX, {[0]="",[1]="Yes"}, 0x10)
 local fsubcmd_get   = ProtoField.uint8(     "pva.get",          "Get    ",          base.HEX, {[0]="",[1]="Yes"}, 0x40)
 local fsubcmd_gtpt  = ProtoField.uint8(     "pva.getput",       "GetPut ",          base.HEX, {[0]="",[1]="Yes"}, 0x80)
-local fstatus       = ProtoField.uint8(     "pva.status",       "Status",           base.HEX, stscodes)
+local fstatus       = ProtoField.uint8(     "pva.status",       "Status",           base.HEX, status_codes)
 
 ----------------------------------------------
 -- BEACON
@@ -278,58 +275,75 @@ pva.fields = {
     fsearch_found,
 }
 
---------
--- utility functions
-----
+----------------------------------------------
+-- Utility functions
+----------------------------------------------
 
-
-local function decodeSize(buf, isbe)
-    if buf:len() < 1 then
+-- decodeSize: decode a size from a buffer
+-- size is encoded as a single byte, or 4 bytes if the first byte is 0xFE or 0xFF
+-- @param buf: the buffer to decode from
+-- @param is_big_endian: true if the buffer is big endian
+-- @return the size and the remaining buffer
+local function decodeSize(buf, is_big_endian)
+    local buf_len = buf:len()
+    if buf_len < 1 then
         return 0, buf
     end
 
-    local s0 = buf(0,1):uint()
-    if s0==255 then
-        return 0, buf:len() > 1 and buf(1) or buf -- special nil string? treat as zero
-    elseif s0==254 then
-        if buf:len() < 5 then
+    local remaining_buf = buf_len > 1 and buf(1) or buf
+    local short_size = buf(0,1):uint()
+    if short_size==0xFF then
+        -- null
+        return 0, remaining_buf
+    elseif short_size==0xFE then
+        -- 4 byte size
+        if buf_len < 5 then
             return 0, buf
         end
-        if isbe then
+        if is_big_endian then
             return buf(1,4):uint(), buf(5)
         else
             return buf(1,4):le_uint(), buf(5)
         end
     else
-        return s0, buf:len() > 1 and buf(1) or buf
+        -- one byte size
+        return short_size, remaining_buf
     end
 end
 
--- extract a string and return that string, and the remaining buffer
-local function decodeString(buf, isbe)
+----------------------------------------------
+-- String decoding
+----------------------------------------------
+
+-- decodeString: extract a string and return that string, and the remaining buffer
+-- string is encoded as a size (1 or 4 bytes) followed by the actual string
+-- @param buf: the buffer to decode from
+-- @param is_big_endian: true if the buffer is big endian
+-- @return the string and the remaining buffer
+local function decodeString(buf, is_big_endian)
     if buf:len() == 0 then
         return buf(0,0), nil
     end
 
-    local s, remaining_buf = decodeSize(buf, isbe)
+    local len, remaining_buf = decodeSize(buf, is_big_endian)
 
     -- Check if we have enough bytes for the string
-    if not remaining_buf or remaining_buf:len() < s then
+    if not remaining_buf or remaining_buf:len() < len then
         -- Not enough data, return what we have
-        return buf(0, math.min(s, buf:len())), nil
+        return buf(0, math.min(len, buf:len())), nil
     end
 
-    if s == remaining_buf:len() then
-        return remaining_buf(0,s), nil
+    if len == remaining_buf:len() then
+        return remaining_buf(0, len), nil
     else
-        return remaining_buf(0,s), remaining_buf(s)
+        return remaining_buf(0, len), remaining_buf(len)
     end
 end
 
 
 -- skip a label string and return the remaining buffer
-local function skipPVStructureLabelString(buf, isbe)
-    local s, buf = decodeSize(buf, isbe)
+local function skipPVStructureLabelString(buf, is_big_endian)
+    local s, buf = decodeSize(buf, is_big_endian)
     if s==buf:len() then
         return nil
     else
@@ -340,7 +354,7 @@ end
 
 
 -- Helper function to read PVData size (Phase 2)
-local function readPVSize(buf, offset, isbe)
+local function readPVSize(buf, offset, is_big_endian)
     if not buf or offset >= buf:len() then
         return 0, offset
     end
@@ -350,19 +364,19 @@ local function readPVSize(buf, offset, isbe)
         return size_byte, offset + 1
     elseif size_byte == 0xFE then
         if offset + 2 >= buf:len() then return 0, offset end
-        local size = isbe and buf(offset + 1, 2):uint() or buf(offset + 1, 2):le_uint()
+        local size = is_big_endian and buf(offset + 1, 2):uint() or buf(offset + 1, 2):le_uint()
         return size, offset + 3
     elseif size_byte == 0xFF then
         if offset + 4 >= buf:len() then return 0, offset end
-        local size = isbe and buf(offset + 1, 4):uint() or buf(offset + 1, 4):le_uint()
+        local size = is_big_endian and buf(offset + 1, 4):uint() or buf(offset + 1, 4):le_uint()
         return size, offset + 5
     end
     return 0, offset
 end
 
 -- Helper function to read PVData string (Phase 2)
-local function readPVString(buf, offset, isbe)
-    local str_len, new_offset = readPVSize(buf, offset, isbe)
+local function readPVString(buf, offset, is_big_endian)
+    local str_len, new_offset = readPVSize(buf, offset, is_big_endian)
     if str_len == 0 or new_offset + str_len > buf:len() then
         return "", new_offset
     end
@@ -474,7 +488,7 @@ end
 -- avoid having to select "Decode as..." every time :)
 local function test_pva (buf, pkt, root)
     -- check for 8 byte minimum length, prefix [MAGIC, 1, _, cmd] where cmd is a valid command #
-    if buf:len()<8 or buf(0,1):uint()~= PVA_MAGIC or buf(1,1):uint()==0 or not bcommands[buf(3,1):uint()]
+    if buf:len()<8 or buf(0,1):uint()~= PVA_MAGIC or buf(1,1):uint()==0 or not application_messages[buf(3,1):uint()]
     then
         return false
     end
@@ -496,7 +510,7 @@ if not status then
     print(err)
 end
 
-local function decodeStatus (buf, pkt, t, isbe)
+local function decodeStatus (buf, pkt, t, is_big_endian)
     local code = buf(0,1):uint()
     local subt = t:add(fstatus, buf(0,1))
     if buf:len()>1 then
@@ -507,8 +521,8 @@ local function decodeStatus (buf, pkt, t, isbe)
         return buf
     else
         local message, stack
-        message, buf = decodeString(buf, isbe)
-        stack, buf = decodeString(buf, isbe)
+        message, buf = decodeString(buf, is_big_endian)
+        stack, buf = decodeString(buf, is_big_endian)
         subt:append_text(message:string())
         if(code~=0 and stack:len()>0)
         then
@@ -527,9 +541,9 @@ end
 local parseFieldDesc
 
 -- Parse structure FieldDesc: Type ID + field count + fields
-local function parseStructDesc(buf, offset, isbe, tree, type_code)
+local function parseStructDesc(buf, offset, is_big_endian, tree, type_code)
     -- Read optional Type ID string
-    local type_id, type_id_offset = readPVString(buf, offset, isbe)
+    local type_id, type_id_offset = readPVString(buf, offset, is_big_endian)
     local clean_name = "struct"
     if type_id and type_id ~= "" then
         offset = type_id_offset
@@ -541,26 +555,26 @@ local function parseStructDesc(buf, offset, isbe, tree, type_code)
     tree:set_text(string.format("(0x%02X: %s)", type_code, clean_name))
 
     -- Read field count
-    local field_count, count_offset = readPVSize(buf, offset, isbe)
+    local field_count, count_offset = readPVSize(buf, offset, is_big_endian)
     offset = count_offset
 
     -- Parse each field: name + FieldDesc
     for i = 1, math.min(field_count, 20) do -- Limit to prevent runaway
         if offset >= buf:len() then break end
 
-        local field_name, name_offset = readPVString(buf, offset, isbe)
+        local field_name, name_offset = readPVString(buf, offset, is_big_endian)
         offset = name_offset
 
-        offset = parseFieldDesc(buf, offset, isbe, tree, field_name)
+        offset = parseFieldDesc(buf, offset, is_big_endian, tree, field_name)
     end
 
     return offset
 end
 
 -- Parse union FieldDesc: Type ID + field count + fields
-local function parseUnionDesc(buf, offset, isbe, tree, type_code)
+local function parseUnionDesc(buf, offset, is_big_endian, tree, type_code)
     -- Read optional Type ID string
-    local type_id, type_id_offset = readPVString(buf, offset, isbe)
+    local type_id, type_id_offset = readPVString(buf, offset, is_big_endian)
     local clean_name = "union"
     if type_id and type_id ~= "" then
         offset = type_id_offset
@@ -571,39 +585,39 @@ local function parseUnionDesc(buf, offset, isbe, tree, type_code)
     tree:set_text(string.format("(0x%02X: %s)", type_code, clean_name))
 
     -- Read field count
-    local field_count, count_offset = readPVSize(buf, offset, isbe)
+    local field_count, count_offset = readPVSize(buf, offset, is_big_endian)
     offset = count_offset
 
     -- Parse each field: name + FieldDesc
     for i = 1, math.min(field_count, 20) do
         if offset >= buf:len() then break end
 
-        local field_name, name_offset = readPVString(buf, offset, isbe)
+        local field_name, name_offset = readPVString(buf, offset, is_big_endian)
         offset = name_offset
 
-        offset = parseFieldDesc(buf, offset, isbe, tree, field_name)
+        offset = parseFieldDesc(buf, offset, is_big_endian, tree, field_name)
     end
 
     return offset
 end
 
 -- Parse cache store: cache key + FieldDesc
-local function parseCacheStore(buf, offset, isbe, tree)
+local function parseCacheStore(buf, offset, is_big_endian, tree)
     if offset + 1 < buf:len() then
-        local cache_key = isbe and buf(offset, 2):uint() or buf(offset, 2):le_uint()
+        local cache_key = is_big_endian and buf(offset, 2):uint() or buf(offset, 2):le_uint()
         tree:set_text(string.format("Cache Store %d", cache_key))
         offset = offset + 2
 
         -- Parse the stored FieldDesc
-        offset = parseFieldDesc(buf, offset, isbe, tree, nil)
+        offset = parseFieldDesc(buf, offset, is_big_endian, tree, nil)
     end
     return offset
 end
 
 -- Parse cache fetch: cache key only
-local function parseCacheFetch(buf, offset, isbe, tree)
+local function parseCacheFetch(buf, offset, is_big_endian, tree)
     if offset + 1 < buf:len() then
-        local cache_key = isbe and buf(offset, 2):uint() or buf(offset, 2):le_uint()
+        local cache_key = is_big_endian and buf(offset, 2):uint() or buf(offset, 2):le_uint()
         tree:set_text(string.format("Cache Fetch %d", cache_key))
         offset = offset + 2
     end
@@ -611,7 +625,7 @@ local function parseCacheFetch(buf, offset, isbe, tree)
 end
 
 -- Core FieldDesc parser - handles all TypeCodes uniformly
-parseFieldDesc = function(buf, offset, isbe, tree, field_name)
+parseFieldDesc = function(buf, offset, is_big_endian, tree, field_name)
     if not buf or offset >= buf:len() then
         return offset
     end
@@ -627,13 +641,13 @@ parseFieldDesc = function(buf, offset, isbe, tree, field_name)
 
     -- Handle TypeCode-specific parsing
     if type_code == TYPE_CODE_STRUCT then
-        offset = parseStructDesc(buf, offset, isbe, field_tree, type_code)
+        offset = parseStructDesc(buf, offset, is_big_endian, field_tree, type_code)
     elseif type_code == TYPE_CODE_UNION then
-        offset = parseUnionDesc(buf, offset, isbe, field_tree, type_code)
+        offset = parseUnionDesc(buf, offset, is_big_endian, field_tree, type_code)
     elseif type_code == CACHE_STORE_CODE then
-        offset = parseCacheStore(buf, offset, isbe, field_tree)
+        offset = parseCacheStore(buf, offset, is_big_endian, field_tree)
     elseif type_code == CACHE_FETCH_CODE then
-        offset = parseCacheFetch(buf, offset, isbe, field_tree)
+        offset = parseCacheFetch(buf, offset, is_big_endian, field_tree)
         -- All other types (scalars, arrays) are just TypeCode - no additional data
     end
 
@@ -644,7 +658,7 @@ end
 -- MONITOR-INIT PARSER (uses unified FieldDesc system)
 -- ===================================================================
 
-local function parseMonitorInit(buf, pkt, t, isbe)
+local function parseMonitorInit(buf, pkt, t, is_big_endian)
     if not buf or buf:len() == 0 then
         return
     end
@@ -667,7 +681,7 @@ local function parseMonitorInit(buf, pkt, t, isbe)
 
     -- Parse Type ID string
     if offset < buf:len() then
-        local type_id, type_id_offset = readPVString(buf, offset, isbe)
+        local type_id, type_id_offset = readPVString(buf, offset, is_big_endian)
         if type_id then
             t:add(buf(offset, type_id_offset - offset), string.format("Type ID: %s", type_id))
             offset = type_id_offset
@@ -676,7 +690,7 @@ local function parseMonitorInit(buf, pkt, t, isbe)
 
     -- Parse FieldDesc structure (starts with field count, not TypeCode)
     if offset < buf:len() then
-        local field_count, count_offset = readPVSize(buf, offset, isbe)
+        local field_count, count_offset = readPVSize(buf, offset, is_big_endian)
         t:add(buf(offset, count_offset - offset), string.format("Field Count: %d", field_count))
         offset = count_offset
 
@@ -684,11 +698,11 @@ local function parseMonitorInit(buf, pkt, t, isbe)
         for i = 1, math.min(field_count, 10) do
             if offset >= buf:len() then break end
 
-            local field_name, name_offset = readPVString(buf, offset, isbe)
+            local field_name, name_offset = readPVString(buf, offset, is_big_endian)
             if not field_name then break end
             offset = name_offset
 
-            offset = parseFieldDesc(buf, offset, isbe, t, field_name)
+            offset = parseFieldDesc(buf, offset, is_big_endian, t, field_name)
         end
 
         -- Show remaining data if any
@@ -702,7 +716,7 @@ end
 -- SIMPLIFIED PVDATA DECODER
 -- ===================================================================
 
-function decodePVData(buf, pkt, t, isbe, label)
+function decodePVData(buf, pkt, t, is_big_endian, label)
     if not buf or buf:len() == 0 then
         return
     end
@@ -715,7 +729,7 @@ function decodePVData(buf, pkt, t, isbe, label)
     end
 
     -- Simple unified parsing - just parse the FieldDesc at the start
-    parseFieldDesc(buf, 0, isbe, pvd_tree, "value")
+    parseFieldDesc(buf, 0, is_big_endian, pvd_tree, "value")
 
     return pvd_tree
 end
@@ -725,9 +739,9 @@ end
 -- command decoders
 -----------------
 
-local function pva_client_search (buf, pkt, t, isbe, cmd)
+local function pva_client_search (buf, pkt, t, is_big_endian, cmd)
     local seq, port
-    if isbe then
+    if is_big_endian then
         seq = buf(0,4):uint()
         port = buf(24,2):uint()
     else
@@ -745,14 +759,14 @@ local function pva_client_search (buf, pkt, t, isbe, cmd)
 
     local nproto, npv
 
-    nproto, buf = decodeSize(buf(26), isbe)
+    nproto, buf = decodeSize(buf(26), is_big_endian)
     for i=0,nproto-1 do
         local name
-        name, buf = decodeString(buf, isbe)
+        name, buf = decodeString(buf, is_big_endian)
         t:add(fsearch_proto, name)
     end
 
-    if isbe then
+    if is_big_endian then
         npv = buf(0,2):uint()
     else
         npv = buf(0,2):le_uint()
@@ -763,13 +777,13 @@ local function pva_client_search (buf, pkt, t, isbe, cmd)
 
         for i=0,npv-1 do
             local cid, name
-            if isbe then
+            if is_big_endian then
                 cid = buf(0,4):uint()
             else
                 cid = buf(0,4):le_uint()
             end
             t:add(fsearch_cid, buf(0,4), cid)
-            name, buf = decodeString(buf(4), isbe)
+            name, buf = decodeString(buf(4), is_big_endian)
             t:add(fsearch_name, name)
 
             pkt.cols.info:append(', '..cid..":'"..name:string().."'")
@@ -778,11 +792,11 @@ local function pva_client_search (buf, pkt, t, isbe, cmd)
     pkt.cols.info:append("), ")
 end
 
-local function pva_server_beacon (buf, pkt, t, isbe, cmd)
+local function pva_server_beacon (buf, pkt, t, is_big_endian, cmd)
     local seq, change, port, proto
 
     t:add(fguid, buf(0,12))
-    if isbe then
+    if is_big_endian then
         seq = buf(13,1):uint()
         change = buf(14,2):uint()
         port = buf(32,2):uint()
@@ -798,13 +812,13 @@ local function pva_server_beacon (buf, pkt, t, isbe, cmd)
 
     pkt.cols.info:append("BEACON(0x"..buf(0,12)..", "..seq..", "..change..")")
 
-    proto, buf = decodeString(buf(34), isbe)
+    proto, buf = decodeString(buf(34), is_big_endian)
     t:add(fsearch_proto, proto)
 end
 
-local function pva_server_search_response (buf, pkt, t, isbe, cmd)
+local function pva_server_search_response (buf, pkt, t, is_big_endian, cmd)
     local seq, port
-    if isbe then
+    if is_big_endian then
         seq = buf(12,4):uint()
         port = buf(32,2):uint()
     else
@@ -819,13 +833,13 @@ local function pva_server_search_response (buf, pkt, t, isbe, cmd)
     t:add(fsearch_port, buf(32,2), port)
 
     local proto
-    proto, buf = decodeString(buf(34), isbe)
+    proto, buf = decodeString(buf(34), is_big_endian)
     t:add(fsearch_proto, proto)
 
     t:add(fsearch_found, buf(0, 1))
 
     local npv
-    if isbe then
+    if is_big_endian then
         npv = buf(1,2):uint()
     else
         npv = buf(1,2):le_uint()
@@ -836,7 +850,7 @@ local function pva_server_search_response (buf, pkt, t, isbe, cmd)
         for i=0,npv-1 do
             local cid, name
 
-            if isbe then
+            if is_big_endian then
                 cid = buf(i*4,4):uint()
             else
                 cid = buf(i*4,4):le_uint()
@@ -850,10 +864,10 @@ local function pva_server_search_response (buf, pkt, t, isbe, cmd)
 
 end
 
-local function pva_client_validate (buf, pkt, t, isbe, cmd)
+local function pva_client_validate (buf, pkt, t, is_big_endian, cmd)
     pkt.cols.info:append("CONNECTION_VALIDATION, ")
     local bsize, isize, qos
-    if isbe
+    if is_big_endian
     then
         bsize = buf(0,4):uint()
         isize = buf(4,2):uint()
@@ -867,7 +881,7 @@ local function pva_client_validate (buf, pkt, t, isbe, cmd)
     t:add(fvalid_isize, buf(4,2), isize)
     t:add(fvalid_qos, buf(6,2), qos)
 
-    method, buf = decodeString(buf(8), isbe)
+    method, buf = decodeString(buf(8), is_big_endian)
 
     -- Declare variables for authz processing
     local authzsize = 0
@@ -912,11 +926,11 @@ local function pva_client_validate (buf, pkt, t, isbe, cmd)
         local peer, method_var, authority, account, isTLS
         if authzsize == 2
         then
-            buf = skipPVStructureLabelString(buf, isbe)
-            buf = skipPVStructureLabelString(buf, isbe)
+            buf = skipPVStructureLabelString(buf, is_big_endian)
+            buf = skipPVStructureLabelString(buf, is_big_endian)
 
-            account, buf = decodeString(buf, isbe)
-            peer, buf = decodeString(buf, isbe)
+            account, buf = decodeString(buf, is_big_endian)
+            peer, buf = decodeString(buf, is_big_endian)
 
             -- Add additional fields to the existing auth entry
             entry_tree:add(fvalid_user, account)
@@ -924,13 +938,13 @@ local function pva_client_validate (buf, pkt, t, isbe, cmd)
 
         elseif authzsize == 3
         then
-            buf = skipPVStructureLabelString(buf, isbe)
-            buf = skipPVStructureLabelString(buf, isbe)
-            buf = skipPVStructureLabelString(buf, isbe)
+            buf = skipPVStructureLabelString(buf, is_big_endian)
+            buf = skipPVStructureLabelString(buf, is_big_endian)
+            buf = skipPVStructureLabelString(buf, is_big_endian)
 
-            peer, buf = decodeString(buf, isbe)
-            authority, buf = decodeString(buf, isbe)
-            account, buf = decodeString(buf, isbe)
+            peer, buf = decodeString(buf, is_big_endian)
+            authority, buf = decodeString(buf, is_big_endian)
+            account, buf = decodeString(buf, is_big_endian)
 
             -- Add additional fields to the existing auth entry
             entry_tree:add(fvalid_host, peer)
@@ -944,13 +958,13 @@ local function pva_client_validate (buf, pkt, t, isbe, cmd)
     end
 end
 
-local function pva_server_validate (buf, pkt, t, isbe, cmd)
+local function pva_server_validate (buf, pkt, t, is_big_endian, cmd)
     pkt.cols.info:append("CONNECTION_VALIDATION, ")
 
     if buf:len() >= 7 then
         -- Parse header: 4 bytes buffer size, 2 bytes introspection size, 1 byte flags
         local bsize, isize, flags
-        if isbe
+        if is_big_endian
         then
             bsize = buf(0,4):uint()
             isize = buf(4,2):uint()
@@ -972,7 +986,7 @@ local function pva_server_validate (buf, pkt, t, isbe, cmd)
             -- Collect all strings
             while remaining and remaining:len() > 0 do
                 local str
-                str, remaining = decodeString(remaining, isbe)
+                str, remaining = decodeString(remaining, is_big_endian)
                 if str and str:len() > 0 then
                     table.insert(strings, str)
                 else
@@ -1041,10 +1055,10 @@ local function pva_server_validate (buf, pkt, t, isbe, cmd)
     end
 end
 
-local function pva_client_create_channel (buf, pkt, t, isbe, cmd)
+local function pva_client_create_channel (buf, pkt, t, is_big_endian, cmd)
     pkt.cols.info:append("CREATE_CHANNEL(")
     local npv
-    if isbe then
+    if is_big_endian then
         npv = buf(0,2):uint()
     else
         npv = buf(0,2):le_uint()
@@ -1053,13 +1067,13 @@ local function pva_client_create_channel (buf, pkt, t, isbe, cmd)
 
     for i=0,npv-1 do
         local cid, name
-        if isbe then
+        if is_big_endian then
             cid = buf(0,4):uint()
         else
             cid = buf(0,4):le_uint()
         end
         t:add(fsearch_cid, buf(0,4), cid)
-        name, buf = decodeString(buf(4), isbe)
+        name, buf = decodeString(buf(4), is_big_endian)
         t:add(fsearch_name, name)
 
         if i<npv-1 then pkt.cols.info:append("', '") end
@@ -1068,9 +1082,9 @@ local function pva_client_create_channel (buf, pkt, t, isbe, cmd)
     pkt.cols.info:append("'), ")
 end
 
-local function pva_server_create_channel (buf, pkt, t, isbe, cmd)
+local function pva_server_create_channel (buf, pkt, t, is_big_endian, cmd)
     local cid, sid
-    if isbe
+    if is_big_endian
     then
         cid = buf(0,4):uint()
         sid = buf(4,4):uint()
@@ -1081,12 +1095,12 @@ local function pva_server_create_channel (buf, pkt, t, isbe, cmd)
     pkt.cols.info:append("CREATE_CHANNEL(cid="..cid..", sid="..sid.."), ")
     t:add(fcid, buf(0,4), cid)
     t:add(fsid, buf(4,4), sid)
-    decodeStatus(buf(8), pkt, t, isbe)
+    decodeStatus(buf(8), pkt, t, is_big_endian)
 end
 
-local function pva_destroy_channel (buf, pkt, t, isbe, cmd)
+local function pva_destroy_channel (buf, pkt, t, is_big_endian, cmd)
     local cid, sid
-    if isbe
+    if is_big_endian
     then
         sid = buf(0,4):uint()
         cid = buf(4,4):uint()
@@ -1099,10 +1113,10 @@ local function pva_destroy_channel (buf, pkt, t, isbe, cmd)
     t:add(fcid, buf(4,4), cid)
 end
 
-local function pva_client_op_destroy (buf, pkt, t, isbe, cmd)
-    local cname = bcommands[cmd]
+local function pva_client_op_destroy (buf, pkt, t, is_big_endian, cmd)
+    local cname = application_messages[cmd]
     local sid, ioid;
-    if isbe
+    if is_big_endian
     then
         sid = buf(0,4):uint()
         ioid = buf(4,4):uint()
@@ -1116,10 +1130,10 @@ local function pva_client_op_destroy (buf, pkt, t, isbe, cmd)
     pkt.cols.info:append(string.format("%s(sid=%u, ioid=%u), ", cname, sid, ioid))
 end
 
-local function pva_client_op (buf, pkt, t, isbe, cmd)
-    local cname = bcommands[cmd]
+local function pva_client_op (buf, pkt, t, is_big_endian, cmd)
+    local cname = application_messages[cmd]
     local sid, ioid, subcmd
-    if isbe
+    if is_big_endian
     then
         sid = buf(0,4):uint()
         ioid = buf(4,4):uint()
@@ -1137,17 +1151,17 @@ local function pva_client_op (buf, pkt, t, isbe, cmd)
     cmd:add(fsubcmd_get, buf(8,1), subcmd)
     cmd:add(fsubcmd_gtpt, buf(8,1), subcmd)
     if buf:len()>9 then
-        decodePVData(buf(9):tvb(), pkt, t, isbe, "PVData Body")
+        decodePVData(buf(9):tvb(), pkt, t, is_big_endian, "PVData Body")
     end
 
     pkt.cols.info:append(string.format("%s(sid=%u, ioid=%u, sub=%02x), ", cname, sid, ioid, subcmd))
 end
 
 
-local function pva_server_op (buf, pkt, t, isbe, cmd)
-    local cname = bcommands[cmd]
+local function pva_server_op (buf, pkt, t, is_big_endian, cmd)
+    local cname = application_messages[cmd]
     local ioid, subcmd
-    if isbe
+    if is_big_endian
     then
         ioid = buf(0,4):uint()
     else
@@ -1165,15 +1179,15 @@ local function pva_server_op (buf, pkt, t, isbe, cmd)
 
     if cmd~=13 or bit.band(subcmd,0x08)~=0 then
         -- monitor updates have no status
-        buf = decodeStatus(buf(0), pkt, t, isbe)
+        buf = decodeStatus(buf(0), pkt, t, is_big_endian)
     end
 
     if buf and buf:len()>0 then
         -- Special handling for MONITOR-INIT messages
         if cmd == 13 and bit.band(subcmd, 0x08) == 0 then -- MONITOR with INIT flag
-            parseMonitorInit(buf, pkt, t, isbe)
+            parseMonitorInit(buf, pkt, t, is_big_endian)
         else
-            decodePVData(buf, pkt, t, isbe, "PVData Body")
+            decodePVData(buf, pkt, t, is_big_endian, "PVData Body")
         end
     end
 
@@ -1306,7 +1320,7 @@ local function decode (buf, pkt, root)
         end
     else
         -- control message
-        local cmd_name = bctrlcommands[cmd]
+        local cmd_name = control_messages[cmd]
         if cmd_name
         then
             pkt.cols.info:append(cmd_name .. ", ")
@@ -1318,7 +1332,7 @@ local function decode (buf, pkt, root)
 
     if show_generic_cmd ~= 0
     then
-        local cmd_name = bcommands[cmd]
+        local cmd_name = application_messages[cmd]
         if cmd_name
         then
             pkt.cols.info:append(cmd_name .. ", ")
