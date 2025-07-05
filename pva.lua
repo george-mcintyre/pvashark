@@ -283,8 +283,12 @@ pva.fields = {
 -- size is encoded as a single byte, or 4 bytes if the first byte is 0xFE or 0xFF
 -- @param buf: the buffer to decode from
 -- @param is_big_endian: true if the buffer is big endian
+-- @param , is_nullable: true if the buffer is nullable (default true)
 -- @return the size and the remaining buffer
-local function decodeSize(buf, is_big_endian)
+local function decodeSize(buf, is_big_endian, is_nullable)
+    if is_nullable == nil then
+        is_nullable = true
+    end
     local buf_len = buf:len()
     if buf_len < 1 then
         return 0, buf
@@ -292,10 +296,23 @@ local function decodeSize(buf, is_big_endian)
 
     local remaining_buf = buf_len > 1 and buf(1) or buf
     local short_size = buf(0,1):uint()
-    if short_size==0xFF then
+    if short_size==0xFF and is_nullable then
         -- null
         return 0, remaining_buf
-    elseif short_size==0xFE then
+    elseif short_size==0xFE and not is_nullable then
+        -- 2 byte size
+        if buf_len < 3 then
+            return 0, buf
+        end
+        if is_big_endian then
+            return buf(1,2):uint(), buf(3)
+        else
+            return buf(1,2):le_uint(), buf(3)
+        end
+    elseif short_size<0xFE then
+        -- one byte size
+        return short_size, remaining_buf
+    else
         -- 4 byte size
         if buf_len < 5 then
             return 0, buf
@@ -305,9 +322,6 @@ local function decodeSize(buf, is_big_endian)
         else
             return buf(1,4):le_uint(), buf(5)
         end
-    else
-        -- one byte size
-        return short_size, remaining_buf
     end
 end
 
@@ -319,13 +333,14 @@ end
 -- string is encoded as a size (1 or 4 bytes) followed by the actual string
 -- @param buf: the buffer to decode from
 -- @param is_big_endian: true if the buffer is big endian
+-- @param , is_nullable: true if the buffer is nullable
 -- @return the string and the remaining buffer
-local function decodeString(buf, is_big_endian)
+local function decodeString(buf, is_big_endian, is_nullable)
     if buf:len() == 0 then
         return buf(0,0), nil
     end
 
-    local len, remaining_buf = decodeSize(buf, is_big_endian)
+    local len, remaining_buf = decodeSize(buf, is_big_endian, is_nullable)
 
     -- Check if we have enough bytes for the string
     if not remaining_buf or remaining_buf:len() < len then
@@ -340,17 +355,18 @@ local function decodeString(buf, is_big_endian)
     end
 end
 
-
--- skip a label string and return the remaining buffer
-local function skipPVStructureLabelString(buf, is_big_endian)
-    local s, buf = decodeSize(buf, is_big_endian)
-    if s==buf:len() then
+-- skipNextElement: skip the next element and return the remaining buffer
+-- @param buf: the buffer to decode from
+-- @param is_big_endian: true if the buffer is big endian
+-- @return the remaining buffer
+local function skipNextElement(buf, is_big_endian)
+    local len, remaining_buf = decodeSize(buf, is_big_endian, is_nullable)
+    if len == remaining_buf:len() then
         return nil
     else
-        return buf(s+1)
+        return remaining_buf(len + 1)
     end
 end
-
 
 
 -- Helper function to read PVData size (Phase 2)
@@ -383,8 +399,6 @@ local function readPVString(buf, offset, is_big_endian)
     local str = buf(new_offset, str_len):string()
     return str, new_offset + str_len
 end
-
-
 
 -- EPICS timestamp conversion to human readable format
 local function formatEpicsTimestamp(seconds, nanoseconds)
@@ -735,9 +749,9 @@ function decodePVData(buf, pkt, t, is_big_endian, label)
 end
 
 
-----------------
+----------------------------
 -- command decoders
------------------
+----------------------------
 
 local function pva_client_search (buf, pkt, t, is_big_endian, cmd)
     local seq, port
@@ -926,8 +940,8 @@ local function pva_client_validate (buf, pkt, t, is_big_endian, cmd)
         local peer, method_var, authority, account, isTLS
         if authzsize == 2
         then
-            buf = skipPVStructureLabelString(buf, is_big_endian)
-            buf = skipPVStructureLabelString(buf, is_big_endian)
+            buf = skipNextElement(buf, is_big_endian)
+            buf = skipNextElement(buf, is_big_endian)
 
             account, buf = decodeString(buf, is_big_endian)
             peer, buf = decodeString(buf, is_big_endian)
@@ -938,9 +952,9 @@ local function pva_client_validate (buf, pkt, t, is_big_endian, cmd)
 
         elseif authzsize == 3
         then
-            buf = skipPVStructureLabelString(buf, is_big_endian)
-            buf = skipPVStructureLabelString(buf, is_big_endian)
-            buf = skipPVStructureLabelString(buf, is_big_endian)
+            buf = skipNextElement(buf, is_big_endian)
+            buf = skipNextElement(buf, is_big_endian)
+            buf = skipNextElement(buf, is_big_endian)
 
             peer, buf = decodeString(buf, is_big_endian)
             authority, buf = decodeString(buf, is_big_endian)
@@ -1227,9 +1241,12 @@ local PVA_MAGIC = 0xCA;
 local PVA_HEADER_LEN = 8;
 
 ----------------------------------------------
--- decode
+-- decode: decode the given buffer into the given packet and root tree node
+-- @param buf: the buffer to decode from
+-- @param pkt: the packet to decode into
+-- @param root: the root tree node to decode into
+-- @return the number of bytes consumed
 ----------------------------------------------
-
 local function decode (buf, pkt, root)
     -- minimum of 8 byte header
     if buf:len() < PVA_HEADER_LEN then
@@ -1352,65 +1369,64 @@ local function decode (buf, pkt, root)
 end
 
 ----------------------------------------------
--- dissector
+-- dissector: the dissector function
+-- Implementation of the PVA disector
+-- @param buf: the buffer to decode from
+-- @param pkt: the packet to decode into
+-- @param root: the root tree node to decode into
 ----------------------------------------------
-
 function pva.dissector (buf, pkt, root)
-
-  if buf(0,1):uint()~= PVA_MAGIC
-  then
-      return
-  end
-
-  pkt.cols.protocol = pva.name
-  pkt.cols.info:clear()
-  pkt.cols.info:append(pkt.src_port.." -> "..pkt.dst_port.." ")
-  if bit.band(buf(2,1):uint(), 0x40)~=0
-  then
-    pkt.cols.info:append("Server ")
-  else
-    pkt.cols.info:append("Client ")
-  end
-
-  local origbuf = buf
-  local totalconsumed = 0
-
-  --print(pkt.number.." "..buf:len())
-
-  -- wireshark 1.99.2 introduced dissect_tcp_pdus() to do this for us
-  while buf:len()>0
-  do
-    local consumed = decode(buf,pkt,root)
-    --print("Consumed "..consumed)
-
-    if consumed<0
+    -- must start with magic
+    local raw_magic = buf(0, 1);
+    if raw_magic:uint() ~= PVA_MAGIC
     then
-      -- Wireshark documentation lists this as the prefered was
-      -- to indicate TCP reassembly.  However, as of version 1.2.11
-      -- this does not work for LUA disectors.  However, the pinfo
-      -- mechanism does.
-      --return consumed
-      pkt.desegment_offset = totalconsumed
-      pkt.desegment_len = -consumed
-      return
-    elseif consumed<8
-    then
-      pkt.cols.info:preppend("[Incomplete] ")
-      break
-    else
-      --print("Consuming "..consumed)
-      totalconsumed = totalconsumed + consumed
-      buf=buf(consumed):tvb()
+        return
     end
-  end
+
+    -- set protocol name in protocol column
+    pkt.cols.protocol = pva.name
+
+    -- set up initial part of info column
+    pkt.cols.info:clear()
+    pkt.cols.info:append(pkt.src_port .. " -> " .. pkt.dst_port .. " ")
+    if bit.band(buf(2, 1):uint(), 0x40) ~= 0
+    then
+        pkt.cols.info:append("Server ")
+    else
+        pkt.cols.info:append("Client ")
+    end
+
+    local total_consumed = 0
+
+    while buf:len() > 0
+    do
+        local consumed = decode(buf, pkt, root)
+
+        if consumed < 0
+        then
+            -- overrun
+            pkt.desegment_offset = total_consumed
+            pkt.desegment_len = -consumed
+            return
+        elseif consumed < PVA_HEADER_LEN
+        then
+            -- incomplete
+            pkt.cols.info:preppend("[Incomplete] ")
+            break
+        else
+            -- just right
+            total_consumed = total_consumed + consumed
+            buf = buf(consumed):tvb()
+        end
+    end
 end
 
+-- initialise
 local utbl = DissectorTable.get("udp.port")
 utbl:add(5075, pva)
 utbl:add(5076, pva)
 local ttbl = DissectorTable.get("tcp.port")
 ttbl:add(5075, pva)
 DissectorTable.get("tls.alpn"):add("pva/1", pva)
-
 
 io.stderr:write("Loaded PVA\n")
