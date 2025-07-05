@@ -59,48 +59,6 @@ local application_messages = {
     [ORIGIN_TAG_MESSAGE] = "ORIGIN_TAG",
 }
 
-local parseFieldDesc
-local pvaClientCreateChannelDecoder
-local pvaClientDestroyDecoder
-local pvaClientSearchDecoder
-local pvaClientValidateDecoder
-local pvaDestroyChannelDecoder
-local pvaGenericClientOpDecoder
-local pvaGenericServerOpDecoder
-local pvaServerBeaconDecoder
-local pvaServerCreateChannelDecoder
-local pvaServerSearchResponseDecoder
-local pvsServerValidateDecoder
-
-local server_cmd_handler = {
-    [BEACON_MESSAGE] =                  pvaServerBeaconDecoder,
-    [CONNECTION_VALIDATION_MESSAGE] =   pvsServerValidateDecoder,
-    [SEARCH_RESPONSE_MESSAGE] =         pvaServerSearchResponseDecoder,
-    [CREATE_CHANNEL_MESSAGE] =          pvaServerCreateChannelDecoder,
-    [DESTROY_CHANNEL_MESSAGE] =         pvaDestroyChannelDecoder,
-    [GET_MESSAGE] =                     pvaGenericServerOpDecoder,
-    [PUT_MESSAGE] =                     pvaGenericServerOpDecoder,
-    [PUT_GET_MESSAGE] =                 pvaGenericServerOpDecoder,
-    [MONITOR_MESSAGE] =                 pvaGenericServerOpDecoder,
-    [ARRAY_MESSAGE] =                   pvaGenericServerOpDecoder,
-    [RPC_MESSAGE] =                     pvaGenericServerOpDecoder,
-}
-
-local client_cmd_handler = {
-    [CONNECTION_VALIDATION_MESSAGE] =   pvaClientValidateDecoder,
-    [SEARCH_MESSAGE] =                  pvaClientSearchDecoder,
-    [CREATE_CHANNEL_MESSAGE] =          pvaClientCreateChannelDecoder,
-    [DESTROY_CHANNEL_MESSAGE] =         pvaDestroyChannelDecoder,
-    [GET_MESSAGE] =                     pvaGenericClientOpDecoder,
-    [PUT_MESSAGE] =                     pvaGenericClientOpDecoder,
-    [PUT_GET_MESSAGE] =                 pvaGenericClientOpDecoder,
-    [MONITOR_MESSAGE] =                 pvaGenericClientOpDecoder,
-    [ARRAY_MESSAGE] =                   pvaGenericClientOpDecoder,
-    [DESTROY_REQUEST_MESSAGE] =         pvaClientDestroyDecoder,
-    [RPC_MESSAGE] =                     pvaGenericClientOpDecoder,
-    [CANCEL_REQUEST_MESSAGE] =          pvaClientDestroyDecoder,
-}
-
 local PVA_MAGIC = 0xCA;
 local PVA_HEADER_LEN = 8;
 
@@ -243,12 +201,18 @@ local placeholder   = ProtoField.bytes("pva.placeholder", " ")
 local fmagic        = ProtoField.uint8(     "pva.magic",        "Magic",            base.HEX)
 local fver          = ProtoField.uint8(     "pva.version",      "Version",          base.DEC)
 local fflags        = ProtoField.uint8(     "pva.flags",        "Flags",            base.HEX)
-local fflag_dir     = ProtoField.uint8(     "pva.direction",    "Direction",        base.HEX, {[0]="client",[1]="server"}, 0x40)
-local fflag_end     = ProtoField.uint8(     "pva.endian",       "Byte order",       base.HEX, {[0]="LSB",[1]="MSB"}, 0x80)
-local fflag_msgtype = ProtoField.uint8(     "pva.msg_type",     "Message type",     base.HEX, {[0]="Application",[1]="Control"}, 0x01)
-local fflag_segmented = ProtoField.uint8(   "pva.segmented",    "Segmented",        base.HEX, {[0]="Not segmented",[1]="First segment",[2]="Last segment",[3]="In-the-middle segment"}, 0x30)
-local fcmd          = ProtoField.uint8(     "pva.command",      "Command",          base.HEX, application_messages)
-local fctrlcmd      = ProtoField.uint8(     "pva.ctrlcommand",  "Control Command",  base.HEX, control_messages)
+local fflag_dir     = ProtoField.uint8(     "pva.direction",    "Direction",
+        base.HEX, {[0]="client",[1]="server"}, 0x40)
+local fflag_end     = ProtoField.uint8(     "pva.endian",       "Byte order",
+        base.HEX, {[0]="LSB",[1]="MSB"}, 0x80)
+local fflag_msgtype = ProtoField.uint8(     "pva.msg_type",     "Message type",
+        base.HEX, {[0]="Application",[1]="Control"}, 0x01)
+local fflag_segmented = ProtoField.uint8(   "pva.segmented",    "Segmented",
+        base.HEX, {[0]="Not segmented",[1]="First segment",[2]="Last segment",[3]="In-the-middle segment"}, 0x30)
+local fcmd          = ProtoField.uint8(     "pva.command",      "Command",
+        base.HEX, application_messages)
+local fctrlcmd      = ProtoField.uint8(     "pva.ctrlcommand",  "Control Command",
+        base.HEX, control_messages)
 local fctrldata     = ProtoField.uint32(    "pva.ctrldata",     "Control Data",     base.HEX)
 local fsize         = ProtoField.uint32(    "pva.size",         "Size",             base.DEC)
 local fbody         = ProtoField.bytes(     "pva.body",         "Body")
@@ -509,36 +473,36 @@ local function decodeAlarmStatus(severity, status)
 end
 
 -- Helper function to get type size (simplified version)
-local function getTypeSize(type_byte)
-    if type_byte == TYPE_CODE_BOOLEAN then return 1 -- bool
-    elseif type_byte == TYPE_CODE_BYTE then return 1 -- int8_t
-    elseif type_byte == TYPE_CODE_SHORT then return 2 -- int16_t
-    elseif type_byte == TYPE_CODE_INT then return 4 -- int32_t
-    elseif type_byte == TYPE_CODE_LONG then return 8 -- int64_t
-    elseif type_byte == TYPE_CODE_UBYTE then return 1 -- uint8_t
-    elseif type_byte == TYPE_CODE_USHORT then return 2 -- uint16_t
-    elseif type_byte == TYPE_CODE_UINT then return 4 -- uint32_t
-    elseif type_byte == TYPE_CODE_ULONG then return 8 -- uint64_t
-    elseif type_byte == TYPE_CODE_FLOAT then return 4 -- float
-    elseif type_byte == TYPE_CODE_DOUBLE then return 8 -- double
+local function getTypeSize(type_code)
+    if type_code == TYPE_CODE_BOOLEAN then return 1 -- bool
+    elseif type_code == TYPE_CODE_BYTE then return 1 -- int8_t
+    elseif type_code == TYPE_CODE_SHORT then return 2 -- int16_t
+    elseif type_code == TYPE_CODE_INT then return 4 -- int32_t
+    elseif type_code == TYPE_CODE_LONG then return 8 -- int64_t
+    elseif type_code == TYPE_CODE_UBYTE then return 1 -- uint8_t
+    elseif type_code == TYPE_CODE_USHORT then return 2 -- uint16_t
+    elseif type_code == TYPE_CODE_UINT then return 4 -- uint32_t
+    elseif type_code == TYPE_CODE_ULONG then return 8 -- uint64_t
+    elseif type_code == TYPE_CODE_FLOAT then return 4 -- float
+    elseif type_code == TYPE_CODE_DOUBLE then return 8 -- double
     else return 0 -- variable length or unknown
     end
 end
 
 -- Helper function to identify authentication method strings
-local function isAuthMethod(str, prev_was_method)
-    local s = str:string():lower()
+local function isAuthMethod(method_name, prev_was_method)
+    local lower_case_method_name = method_name:string():lower()
 
     -- Strong method indicators
-    local strong_methods = {"x509", "ca", "plain", "kerberos", "tls", "ssl", "digest", "basic"}
+    local strong_methods = {"x509", "ca"}
     for _, method in ipairs(strong_methods) do
-        if s == method then
+        if lower_case_method_name == method then
             return true
         end
     end
 
     -- "anonymous" is typically a username unless it's clearly in method position
-    if s == "anonymous" then
+    if lower_case_method_name == "anonymous" then
         -- Treat as method only if we've already seen a method (meaning this starts a new entry)
         return prev_was_method
     end
@@ -556,7 +520,7 @@ local function decodeStatus (message_body, tree, is_big_endian)
     local status_code = message_body(0,1):uint()
     local sub_tree = tree:add(fstatus, message_body(0,1))
     if message_body:len()>1 then
-        message_body = message_body(1):tvb()
+        message_body = message_body(1)
     end
 
     if status_code ==0xFF then
@@ -578,20 +542,21 @@ end
 -- Parse structure FieldDesc: Type ID + field count + fields
 local function parseStructDesc(message_body, is_big_endian, tree, type_code)
     -- Read optional Type ID string
-    local type_id, message_body = decodeString(message_body, offset, is_big_endian, false)
+    local type_id, message_body = decodeString(message_body, is_big_endian, false)
     local clean_name = "struct"
-    if type_id and type_id ~= "" then
+    if type_id and type_id:len() > 0 then
         -- Extract clean type name
-        clean_name = type_id:match("([^:]+)") or type_id
+        local type_id_str = type_id:string()
+        clean_name = type_id_str:match("([^:]+)") or type_id_str
     end
 
     -- Update tree display name
     tree:set_text(string.format("(0x%02X: %s)", type_code, clean_name))
 
     -- Read field count
-    if (message_body ~= nil and message_body.len > 0) then
+    if (message_body ~= nil and message_body:len() > 0) then
         local field_count, message_body = decodeSize(message_body, is_big_endian, false)
-        if (field_count ~= nil and message_body ~= nil and message_body.len > 0) then
+        if (field_count ~= nil and message_body ~= nil and message_body:len() > 0) then
             -- Parse each field: name + FieldDesc
             for i = 1, field_count do
                 local field_name, message_body = decodeString(message_body, is_big_endian, false)
@@ -633,54 +598,54 @@ local function parseUnionDesc(buf, offset, is_big_endian, tree, type_code)
     return offset
 end
 
-local function parseCacheStore(buf, offset, is_big_endian, tree)
-    if offset + 1 < buf:len() then
-        local cache_key = is_big_endian and buf(offset, 2):uint() or buf(offset, 2):le_uint()
+local function parseCacheStore(buf, is_big_endian, tree)
+    if buf and buf:len() > 1 then
+        local cache_key = getUint(buf(0, 2), is_big_endian)
         tree:set_text(string.format("Cache Store %d", cache_key))
-        offset = offset + 2
 
         -- Parse the stored FieldDesc
-        offset = parseFieldDesc(buf, offset, is_big_endian, tree, nil)
+        buf = buf(2)
+        buf = parseFieldDesc(buf, is_big_endian, tree, nil)
     end
-    return offset
+    return buf
 end
 
-local function parseCacheFetch(buf, offset, is_big_endian, tree)
-    if offset + 1 < buf:len() then
-        local cache_key = is_big_endian and buf(offset, 2):uint() or buf(offset, 2):le_uint()
+local function parseCacheFetch(buf, is_big_endian, tree)
+    if buf and buf:len() > 1 then
+        local cache_key = getUint(buf(0, 2), is_big_endian)
         tree:set_text(string.format("Cache Fetch %d", cache_key))
-        offset = offset + 2
+        buf = buf(2)
     end
-    return offset
+    return buf
 end
 
 parseFieldDesc = function(buf, is_big_endian, tree, field_name)
-    if not buf or offset >= buf:len() then
-        return offset
+    if not buf or buf:len() < 1 then
+        return buf
     end
 
-    local type_code = buf(offset, 1):uint()
+    local type_code = buf(0, 1):uint()
+    buf = buf(1)
     local type_name = PVD_TYPES[type_code] or string.format("unknown(0x%02X)", type_code)
-    offset = offset + 1
 
     -- Create field display with standard format: fieldname (0xHH: typename)
     local display_name = field_name and string.format("%s (0x%02X: %s)", field_name, type_code, type_name)
             or string.format("(0x%02X: %s)", type_code, type_name)
-    local field_tree = tree:add(buf(offset - 1, 1), display_name)
+    local field_tree = tree:add(type_code, display_name)
 
     -- Handle TypeCode-specific parsing
     if type_code == TYPE_CODE_STRUCT then
-        offset = parseStructDesc(buf, offset, is_big_endian, field_tree, type_code)
+        buf = parseStructDesc(buf, is_big_endian, field_tree, type_code)
     elseif type_code == TYPE_CODE_UNION then
-        offset = parseUnionDesc(buf, offset, is_big_endian, field_tree, type_code)
+        buf = parseUnionDesc(buf, is_big_endian, field_tree, type_code)
     elseif type_code == CACHE_STORE_CODE then
-        offset = parseCacheStore(buf, offset, is_big_endian, field_tree)
+        buf = parseCacheStore(buf, is_big_endian, field_tree)
     elseif type_code == CACHE_FETCH_CODE then
-        offset = parseCacheFetch(buf, offset, is_big_endian, field_tree)
+        buf = parseCacheFetch(buf, is_big_endian, field_tree)
         -- All other types (scalars, arrays) are just TypeCode - no additional data
     end
 
-    return offset
+    return buf
 end
 
 -- ===================================================================
@@ -731,7 +696,7 @@ local function parseMonitorInit(buf, pkt, t, is_big_endian)
             if not field_name then break end
             offset = name_offset
 
-            offset = parseFieldDesc(buf, offset, is_big_endian, t, field_name)
+            offset = parseFieldDesc(buf, is_big_endian, t, field_name)
         end
 
         -- Show remaining data if any
@@ -753,7 +718,7 @@ function decodePVData(buf, pkt, t, is_big_endian, label)
         return pvd_tree
     end
 
-    parseFieldDesc(buf, 0, is_big_endian, pvd_tree, "value")
+    parseFieldDesc(buf, is_big_endian, pvd_tree, "value")
 
     return pvd_tree
 end
@@ -985,8 +950,8 @@ local function pvsServerValidateDecoder (message_body, pkt, tree, is_big_endian)
 
     if message_body:len() >= VALIDATION_HEADER_LEN then
         -- Parse header: 4 bytes buffer size, 2 bytes introspection size, 1 byte flags
-        local bsize getUint(message_body(0,4), is_big_endian)
-        local isize getUint(message_body(4,2), is_big_endian)
+        local bsize = getUint(message_body(0,4), is_big_endian)
+        local isize = getUint(message_body(4,2), is_big_endian)
         local flags = message_body(6,1):uint()
         tree:add(fvalid_bsize, message_body(0,4), bsize)
         tree:add(fvalid_isize, message_body(4,2), isize)
@@ -994,7 +959,7 @@ local function pvsServerValidateDecoder (message_body, pkt, tree, is_big_endian)
 
         -- Parse all strings into a table first
         if message_body:len() > VALIDATION_HEADER_LEN then
-            local remaining = message_body(VALIDATION_HEADER_LEN):tvb()
+            local remaining = message_body(VALIDATION_HEADER_LEN)
             local strings = {}
 
             -- Collect all strings
@@ -1014,25 +979,25 @@ local function pvsServerValidateDecoder (message_body, pkt, tree, is_big_endian)
                 local current_entry = {}
                 local has_seen_method = false
 
-                for i, str in ipairs(strings) do
-                    if isAuthMethod(str, has_seen_method) then
+                for _, method_name in ipairs(strings) do
+                    if isAuthMethod(method_name, has_seen_method) then
                         -- This is a method string
                         if current_entry.method then
                             -- Current entry already has a method, start new entry
                             table.insert(auth_entries, current_entry)
-                            current_entry = {method = str}
+                            current_entry = {method = method_name }
                         else
                             -- Add method to current entry
-                            current_entry.method = str
+                            current_entry.method = method_name
                         end
                         has_seen_method = true
                     else
                         -- This is likely a name/user string
                         if not current_entry.name then
-                            current_entry.name = str
+                            current_entry.name = method_name
                         else
                             -- Could be additional data like response
-                            current_entry.response = str
+                            current_entry.response = method_name
                         end
                     end
                 end
@@ -1118,8 +1083,8 @@ end
 -- @param cmd the command number
 ----------------------------------------------
 local function pvaDestroyChannelDecoder (message_body, pkt, tree, is_big_endian, cmd)
-    local cid getUint(message_body(0,4), is_big_endian)
-    local sid getUint(message_body(4,4), is_big_endian)
+    local cid = getUint(message_body(0,4), is_big_endian)
+    local sid = getUint(message_body(4,4), is_big_endian)
     pkt.cols.info:append("DESTROY_CHANNEL(cid="..cid..", sid="..sid.."), ")
     tree:add(fsid, message_body(0,4), sid)
     tree:add(fcid, message_body(4,4), cid)
@@ -1222,6 +1187,35 @@ local function pvaGenericServerOpDecoder (message_body, pkt, tree, is_big_endian
 
     pkt.cols.info:append(string.format("%s(ioid=%u, sub=%02x), ", cname, ioid, sub_command))
 end
+
+local server_cmd_handler = {
+    [BEACON_MESSAGE] =                  pvaServerBeaconDecoder,
+    [CONNECTION_VALIDATION_MESSAGE] =   pvsServerValidateDecoder,
+    [SEARCH_RESPONSE_MESSAGE] =         pvaServerSearchResponseDecoder,
+    [CREATE_CHANNEL_MESSAGE] =          pvaServerCreateChannelDecoder,
+    [DESTROY_CHANNEL_MESSAGE] =         pvaDestroyChannelDecoder,
+    [GET_MESSAGE] =                     pvaGenericServerOpDecoder,
+    [PUT_MESSAGE] =                     pvaGenericServerOpDecoder,
+    [PUT_GET_MESSAGE] =                 pvaGenericServerOpDecoder,
+    [MONITOR_MESSAGE] =                 pvaGenericServerOpDecoder,
+    [ARRAY_MESSAGE] =                   pvaGenericServerOpDecoder,
+    [RPC_MESSAGE] =                     pvaGenericServerOpDecoder,
+}
+
+local client_cmd_handler = {
+    [CONNECTION_VALIDATION_MESSAGE] =   pvaClientValidateDecoder,
+    [SEARCH_MESSAGE] =                  pvaClientSearchDecoder,
+    [CREATE_CHANNEL_MESSAGE] =          pvaClientCreateChannelDecoder,
+    [DESTROY_CHANNEL_MESSAGE] =         pvaDestroyChannelDecoder,
+    [GET_MESSAGE] =                     pvaGenericClientOpDecoder,
+    [PUT_MESSAGE] =                     pvaGenericClientOpDecoder,
+    [PUT_GET_MESSAGE] =                 pvaGenericClientOpDecoder,
+    [MONITOR_MESSAGE] =                 pvaGenericClientOpDecoder,
+    [ARRAY_MESSAGE] =                   pvaGenericClientOpDecoder,
+    [DESTROY_REQUEST_MESSAGE] =         pvaClientDestroyDecoder,
+    [RPC_MESSAGE] =                     pvaGenericClientOpDecoder,
+    [CANCEL_REQUEST_MESSAGE] =          pvaClientDestroyDecoder,
+}
 
 ----------------------------------------------
 -- decode: decode the given buffer into the given packet and root tree node
@@ -1394,7 +1388,7 @@ function pva.dissector (buf, pkt, root)
         else
             -- just right
             total_consumed = total_consumed + consumed
-            buf = buf(consumed):tvb()
+            buf = buf(consumed)
         end
     end
 end
