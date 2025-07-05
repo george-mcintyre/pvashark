@@ -340,29 +340,6 @@ local function getUint(src, is_big_endian)
     end
 end
 
--- Parse Type ID string
-local function getTypeId(message_body, tree, is_big_endian)
-    if message_body:len() > 0 then
-        local type_id, remaining_buf = decodeString(message_body, is_big_endian, false)
-        if type_id and type_id:len() > 0 then
-            local type_id_str = type_id:string()
-            local display_name = type_id_str
-            
-            -- Look for normative type translation
-            for i = 1, #nt_types, 2 do
-                if nt_types[i] == type_id_str then
-                    display_name = nt_types[i + 1]
-                    break
-                end
-            end
-            
-            tree:add(type_id, string.format("Type ID: %s", display_name))
-            message_body = remaining_buf
-        end
-    end
-    return type_id, message_body
-end
-
 ----------------------------------------------
 -- decodeSize: decode a size from a buffer
 -- size is encoded as a single byte, or 4 bytes if the first byte is 0xFE or 0xFF
@@ -430,6 +407,30 @@ local function decodeString(buf, is_big_endian, is_nullable)
         return remaining_buf(0, len), remaining_buf(len)
     end
 end
+
+-- Parse Type ID string
+local function getTypeId(message_body, tree, is_big_endian)
+    if message_body:len() > 0 then
+        local type_id, remaining_buf = decodeString(message_body, is_big_endian, false)
+        if type_id and type_id:len() > 0 then
+            local type_id_str = type_id:string()
+            local display_name = type_id_str
+            
+            -- Look for normative type translation
+            for i = 1, #nt_types, 2 do
+                if nt_types[i] == type_id_str then
+                    display_name = nt_types[i + 1]
+                    break
+                end
+            end
+            
+            tree:add(type_id, string.format("Type ID: %s", display_name))
+            message_body = remaining_buf
+        end
+    end
+    return type_id, message_body
+end
+
 
 ----------------------------------------------
 -- skipNextElement: skip the next element and return the remaining buffer
@@ -580,7 +581,7 @@ end
 -- Parse structure FieldDesc: Type ID + field count + fields
 local function parseStructDesc(message_body, is_big_endian, tree, type_code)
     -- Read optional Type ID string
-    local type_id, message_body = decodeString(message_body, is_big_endian, false)
+    local type_id, message_body = getTypeId(message_body, tree, is_big_endian)
     local clean_name = "struct"
     if type_id and type_id:len() > 0 then
         -- Extract clean type name
@@ -607,33 +608,32 @@ local function parseStructDesc(message_body, is_big_endian, tree, type_code)
 end
 
 -- Parse union FieldDesc: Type ID + field count + fields
-local function parseUnionDesc(buf, offset, is_big_endian, tree, type_code)
+local function parseUnionDesc(message_body, is_big_endian, tree, type_code)
     -- Read optional Type ID string
-    local type_id, type_id_offset = readPVString(buf, offset, is_big_endian)
+    local type_id, message_body = getTypeId(message_body, tree, is_big_endian)
     local clean_name = "union"
-    if type_id and type_id ~= "" then
-        offset = type_id_offset
-        clean_name = type_id:match("([^:]+)") or type_id
+    if type_id and type_id:len() > 0 then
+        -- Extract clean type name
+        local type_id_str = type_id:string()
+        clean_name = type_id_str:match("([^:]+)") or type_id_str
     end
 
     -- Update tree display name
     tree:set_text(string.format("(0x%02X: %s)", type_code, clean_name))
 
     -- Read field count
-    local field_count, count_offset = readPVSize(buf, offset, is_big_endian)
-    offset = count_offset
-
-    -- Parse each field: name + FieldDesc
-    for i = 1, math.min(field_count, 20) do
-        if offset >= buf:len() then break end
-
-        local field_name, name_offset = readPVString(buf, offset, is_big_endian)
-        offset = name_offset
-
-        offset = parseFieldDesc(buf, offset, is_big_endian, tree, field_name)
+    if (message_body ~= nil and message_body:len() > 0) then
+        local field_count, message_body = decodeSize(message_body, is_big_endian, false)
+        if (field_count ~= nil and message_body ~= nil and message_body:len() > 0) then
+            -- Parse each field: name + FieldDesc
+            for i = 1, field_count do
+                local field_name, message_body = decodeString(message_body, is_big_endian, false)
+                message_body = parseFieldDesc(message_body, is_big_endian, tree, field_name)
+            end
+        end
     end
 
-    return offset
+    return message_body
 end
 
 local function parseCacheStore(buf, is_big_endian, tree)
@@ -712,11 +712,7 @@ local function parseMonitorInit(buf, pkt, t, is_big_endian)
 
     -- Parse Type ID string
     if buf:len() > 0 then
-        local type_id, remaining_buf = decodeString(buf, is_big_endian, false)
-        if type_id and type_id:len() > 0 then
-            t:add(type_id, string.format("Type ID: %s", type_id:string()))
-            buf = remaining_buf
-        end
+        local type_id, buf = getTypeId(buf, t, is_big_endian)
     end
 
     -- Parse FieldDesc structure (starts with field count, not TypeCode)
