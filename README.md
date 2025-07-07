@@ -1,14 +1,20 @@
 # pvashark
 
-Wireshark Lua script plugin packet disector for PV Access protocol
+Wireshark Lua script plugin packet dissector for PV Access protocol
 
-Builds on work by mdagidaver in https://github.com/mdavidsaver/cashark
+Builds on work by mdavidsaver in https://github.com/mdavidsaver/cashark
 
-This repo extends support to all PVData, and Normative Data Types.
+This repo extends support to all PVData and Normative Data Types.
 
 # EPICS PVAccess — Wire Protocol Specification
 
 This document describes the PVAccess wire protocol used by EPICS 7 for process variable communication (PV Access). The protocol supports complex structured data types called Normative Types (NT) and provides more sophisticated data handling than traditional Channel Access.
+
+**Key Protocol Features:**
+- **Structured Data**: Supports complex nested data structures beyond simple scalars
+- **Type Introspection**: Self-describing data with cached type definitions
+- **Efficient Updates**: Partial updates using ChangedBitSet to send only modified fields
+- **Normative Types**: Standard data structures (NTScalar, NTArray, etc.) for interoperability
 
 > **Scope**  
 > • TLS framing (if used) is opaque for this document.  
@@ -272,9 +278,7 @@ No additional payload body follows these 8‑byte headers.
    ├─ AuthZ Flags: 0x02
    ├─ AuthZ Elem-cnt: 1
    └─ AuthZ Entry 1
-      ├─ AuthZ name: "CN=client.facility.org"
-      ├─ AuthZ method: "x509"
-      └─ AuthZ response: "certificate_valid"
+      └─ AuthZ method: "x509"
 ```
 
 ### 4.3 Channel Lifecycle
@@ -322,26 +326,26 @@ No additional payload body follows these 8‑byte headers.
 ```
 
 ### 4.4 Channel Operations 
-|  Cmd | Purpose                        | Description                                                                               |
-|-----:|--------------------------------|-------------------------------------------------------------------------------------------|
-| `02` | **Echo** (app‑layer)           | Raw user bytes echoed back by peer                                                        |
-| `0A` | **Channel Get**                | INIT → type info, exec → ChangedBitSet + data                                             |
-| `0B` | **Channel Put**                | INIT → type info, exec → data                                                             |
-| `0C` | **Channel Put‑Get**            | Combined put args → result data                                                           |
-| `0D` | **Monitor**                    | INIT then stream of updates (ChangedBitSet + data); client ACKs with special sub‑cmd bits |
-| `0E` | **Channel Array**              | INIT; sub‑cmd `0x00` PUT, `0x40` GET, `0x80` SET‑LEN                                      |
-| `10` | **Channel Process**            | Fire record processing                                                                    |
-| `11` | **Get Field**                  | Ask for introspection type of (sub‑)field                                                 |
-| `12` | **Message** (server notices)   | {requestID, severity, string}                                                             |
-| `13` | **Multiple Data** (deprecated) | Not emitted by PVXS                                                                       |
-| `14` | **RPC**                        | INIT then {args → results}                                                                |
+|  Cmd | Purpose                        | Description                                                                                  |
+|-----:|--------------------------------|----------------------------------------------------------------------------------------------|
+| `02` | **Echo** (app‑layer)           | Raw user bytes echoed back by peer                                                           |
+| `0A` | **Channel Get**                | `INIT` → type info, <br>`EXEC` → `ChangedBitSet` + data                                      |
+| `0B` | **Channel Put**                | `INIT` → type info, <br>`EXEC` → data                                                        |
+| `0C` | **Channel Put‑Get**            | Combined put args → result data                                                              |
+| `0D` | **Monitor**                    | `INIT` <br>`UPDATE` (`ChangedBitSet` + data) ... <br>client `ACK`s with special sub‑cmd bits |
+| `0E` | **Channel Array**              | `INIT`; sub‑cmd `0x00` `PUT`, `0x40` `GET`, `0x80` `SET‑LEN`                                 |
+| `10` | **Channel Process**            | Fire record processing                                                                       |
+| `11` | **Get Field**                  | Ask for introspection type of (sub‑)field                                                    |
+| `12` | **Message** (server notices)   | {`requestID`, `severity`, `string`}                                                          |
+| `13` | **Multiple Data** (deprecated) | Not emitted by PVXS                                                                          |
+| `14` | **RPC**                        | `INIT` then {`args` → `results`}                                                             |
 
 sub‑commands are in **byte 0** of payload.  Most channel operations use the following sub-commands: 
 - `0x08`: INIT
 - `0x00`: EXEC 
 - `0x10`: DESTROY
 
-#### 4.4.1 Client GET NTScalar Double
+#### 4.4.1 Client GET (INIT) NTScalar Double
 
 **Wireshark Display:**
 ```
@@ -361,15 +365,36 @@ sub‑commands are in **byte 0** of payload.  Most channel operations use the fo
    │  ├─ Destroy: No (0)
    │  └─ Process: No (0)
    └─ value (0x80: NTScalar)
-      ├─ value (0x43: double): 
-      ├─ alarm (0x80: alarm_t) 
-      │  ├─ severity (0x22: int32_t): 
-      │  ├─ status (0x22: int32_t):  
-      │  └─ message (0x60: string):  
-      ├─ timeStamp (0x80: time_t) 
-      │  ├─ secondsPastEpoch (0x23: int64_t): 
-      │  ├─ nanoseconds: (0x22: int32_t): 
-      │  └─ userTag (0x22: int32_t): 
+      ├─ value (0x43: double)
+      ├─ descriptor (0x60: string)
+      ├─ alarm (0x80: alarm_t)
+      │  ├─ severity (0x22: int32_t)
+      │  ├─ status (0x22: int32_t)
+      │  └─ message (0x60: string)
+      ├─ timeStamp (0x80: time_t)
+      │  ├─ secondsPastEpoch (0x23: int64_t)
+      │  ├─ nanoseconds (0x22: int32_t)
+      │  └─ userTag (0x22: int32_t)
+      ├─ display (0x80: display_t)
+      │  ├─ double limitLow (0x22: int32_t)
+      │  ├─ double limitHigh (0x22: int32_t)
+      │  ├─ string description (0x22: int32_t)
+      │  ├─ string units (0x22: int32_t)
+      │  ├─ int precision (0x22: int32_t)
+      │  └─ form (0x80: enum_t)
+      │     ├─ index (0x22: int32_t)
+      │     └─ choices (0x68: string[]): 
+      |         choices[0]: "Default"
+      |         choices[1]: "String" 
+      |         choices[2]: "Binary" 
+      |         choices[3]: "Decimal" 
+      |         choices[4]: "Hex"
+      |         choices[5]: "Exponential"
+      |         choices[6]: "Engineering"
+      └─ control (0x80: control_t)
+         ├─ secondsPastEpoch (0x23: int64_t)
+         ├─ nanoseconds (0x22: int32_t)
+         └─ userTag (0x22: int32_t)
 ```
 
 #### 4.4.2 Client GET Simple Scalar Byte
@@ -392,7 +417,7 @@ sub‑commands are in **byte 0** of payload.  Most channel operations use the fo
    │  ├─ Destroy: No (0)
    │  └─ Process: No (0)
    ├─ Status: OK (0xFF)
-   ├─ BitSet: 0 bytes (full value)
+   ├─ BitSet: 0 (full value)
    └─ value (0x24: uint8_t): 42
 ```
 
@@ -488,11 +513,11 @@ Alignment: Except for segmentation padding, structures are packed; there is **no
 
 pvAccess allows arbitrary, nested pvData structures. To avoid resending the same type description every time,
 the sender assigns a 16‑bit type‑ID and sends the full description once. Later messages can refer to the same
-type with the much shorter “ID‑only” form. The rules are normative: a sender must send the full form before the first ID‑only reference, and the mapping is per connection and per direction  ￼.
+type with the much shorter "ID‑only" form. The rules are normative: a sender must send the full form before the first ID‑only reference, and the mapping is per connection and per direction  ￼.
 
 | Lead byte(s)                        | Name                       | Payload that follows                                                                |
 |-------------------------------------|----------------------------|-------------------------------------------------------------------------------------|
-| `0xFF`                              | `NULL_TYPE_CODE`           | Nothing. Means “no introspection here (and no user data that would need it)”.       |
+| `0xFF`                              | `NULL_TYPE_CODE`           | Nothing. Means "no introspection here (and no user data that would need it)".       |
 | `0xFE` `<id>`                       | `ONLY_ID_TYPE_CODE`        | 2‑byte id (little‑ or big‑endian = connection byte order).                          | 
 | `0xFD` `<id>` `<FieldDesc>`         | `FULL_WITH_ID_TYPE_CODE`   | 2‑byte id then the complete FieldDesc tree.                                         | 
 | `0xFC` `<id>` `<tag>` `<FieldDesc>` | `FULL_TAGGED_ID_TYPE_CODE` | As above plus a 32‑bit tag used only on lossy transports.                           |
@@ -538,9 +563,9 @@ to get from the cached info and therefore how to decode the bytes that follow.
 If the client needs to embed a pvRequest structure (e.g. filter options) it follows the same rules: send FULL_WITH_ID the first time, then ONLY_ID in subsequent identical requests.
 
 
-## 8 TypeCode System
+## 8. TypeCode System
 
-Each node in a **FieldDesc tree** begins with **one opaque byte** `TypeCode`.
+Each node in a **FieldDesc tree** begins with **one opaque byte** called a `TypeCode`.
 The PVXS implementation maps these bytes exactly to the EPICS pvData enumeration:
 
 ### 8.1 Standard Type Codes
@@ -638,38 +663,37 @@ repeat N times:
                           // recursive
 ```
 
-### Examples 
+### 8.3 TypeCode Examples 
 
-A **scalar Int32**: typeCode `0b00100 010` → `0x22` (`kind=001` Int, signed, scalar) – no extra data.
+A **scalar int32_t**: TypeCode `0b00100 010` → `0x22` (`kind=001` Int, signed, scalar) – no extra data.
 
-A **double[16]** fixed array: typeCode `kind=010` (float) + `11` (fixed array) + size bits `011` → `0x6B` followed by the **Size** value 16.
+A **double[16]** fixed array: TypeCode `kind=010` (float) + `11` (fixed array) + size bits `011` → `0x6B` followed by the **Size** value 16.
 
-A **NTScalar** for **double**: typeCode `0b10000 000` → `0x80` (`kind=100` (complex) + `00` (non-array) + `000` (struct))
- - `0x80` typeCode 
- - `0x15 65 70 69 63 73 3a 6e 74 2f 4e 54 53 63 61 6c 61 72 3a 31 2e 30` typeID
-   - `21` characters`"epics:nt/NTScalar:1.0"` 
-   - (required for struct/union only) 
-   - otherwise we just use "value" as the field name in the output
- - `0x06` Field Count - size-encoded,
- - FIELD 1
-   - `0x05 76 61 6c 75 65` typeId
-     - `5` characters`"value"`
-   - `0x43` - a **scalar double**: typeCode `0b01000 011` (`kind=010` (floating point) + `00` (non-array) + `011` (scalar))
-   - optional - 8-bytes-value depending if this is introspection-only or if it contains values as well
- - other Normative Type FIELDS for NTScalar (`descriptor`, `alarm`, `timestamp`, `display`, `control`)
-   - other fields have their own typeIDs, and typeCodes which will determine how they are decoded
+A **NTScalar** for **double**: TypeCode `0b10000 000` → `0x80` (`kind=100` (complex) + `00` (non-array) + `000` (struct))
+  - `0x80` TypeCode (struct)
+   - `0x15 65 70 69 63 73 3a 6e 74 2f 4e 54 53 63 61 6c 61 72 3a 31 2e 30` Type ID
+   - `21` characters `"epics:nt/NTScalar:1.0"` 
+   - (Type ID required for struct/union only) 
+ - `0x06` Field Count (size-encoded = 6 fields)
+ - FIELD 1: "value"
+   - `0x05 76 61 6c 75 65` Field name
+     - `5` characters `"value"`
+   - `0x43` TypeCode for **scalar double**: `0b01000 011` (`kind=010` floating point + `00` non-array + `011` double)
+   - Optional: 8-byte value (depending on introspection type)
+ - Other Normative Type fields for NTScalar (`descriptor`, `alarm`, `timeStamp`, `display`, `control`)
+   - Each field has its own name, TypeCode, and optional values
 
 ---
 
-### Notes
+### 8.4 TypeCode Encoding Rules
 
 * **Type ID** is *only* present for `kind=100` **structure/union** (and their arrays) – it is *not* used for scalar or basic arrays
 * **Element Type** appears *only* for arrays of complex kinds; scalar arrays do **not** carry a second FieldDesc
-* **Field Count** is a **Size‑encoded integer** that precedes the repeated `(name + FieldDesc)` list.
-* Bounded/fixed arrays of scalars carry a **bound/count Size value**, not a nested FieldDesc. 
-* The lead‑byte flags, not separate columns, distinguish scalar vs. array and encode signed/unsigned and width for integers.
+* **Field Count** is a **Size‑encoded integer** that precedes the repeated `(name + FieldDesc)` list
+* Bounded/fixed arrays of scalars carry a **bound/count Size value**, not a nested FieldDesc
+* The lead‑byte flags, not separate columns, distinguish scalar vs. array and encode signed/unsigned and width for integers
 
-#### 7.2.2 Encoding Examples
+### 8.5 FieldDesc Encoding Examples
 
 **Leaf Node (Scalar):**
 
@@ -679,7 +703,7 @@ A **NTScalar** for **double**: typeCode `0b10000 000` → `0x80` (`kind=100` (co
 
 **Wireshark Display:**
 ```
-└─ value (0x22: int32_t)
+└─ value (0x22: int32_t):
 ```
 
 **Simple Structure:**
@@ -770,7 +794,7 @@ A **NTScalar** for **double**: typeCode `0b10000 000` → `0x80` (`kind=100` (co
    └─ y (0x22: int32_t):
 ```
 
-#### 7.2.3 Tree Traversal
+### 8.6 Tree Traversal
 
 Nodes are serialized **depth‑first**; receivers rebuild the hierarchy recursively.
 
@@ -779,7 +803,7 @@ FieldDesc trees are:
 - **Parsed recursively**: Receivers rebuild the hierarchy
 - **Cached by connection**: Each connection maintains its own type cache
 
-#### 7.2.4 Type‑cache shortcuts
+### 8.7 Type‑cache shortcuts
 
 To avoid re‑sending large type trees, PVXS supports the pvAccess **type‑cache op‑codes**:
 - *`0xFD key FieldDesc`* → *store in cache*
@@ -800,8 +824,8 @@ Given a `FieldDesc` the **value stream** that immediately follows is:
 | **{u,}int16**             | 2 bytes                                                                                  |
 | **{u,}int32**             | 4 bytes                                                                                  |
 | **{u,}int64**             | 8 bytes                                                                                  |
-| **float32**               | 4 bytes IEEE                                                                             |
-| **float64**               | 8 bytes IEEE                                                                             |
+| **float**                 | 4 bytes IEEE-754                                                                         |
+| **double**                | 8 bytes IEEE-754                                                                         |
 | **string**                | *Size* + UTF‑8 bytes                                                                     |
 | **scalar array**          | *Size* (#elems) + packed elements                                                        |
 | **string array**          | *Size* (#elems) + repeated (*Size + UTF‑8*)                                              |
@@ -841,7 +865,7 @@ Example of breadth-first numbering used by `BitSet` fpr `NTScalar double`:
 8 valueAlarm     (structure)
 ```
 
-Only the root indices matter when you flag “whole sub‑structure changed”.
+Only the root indices matter when you flag "whole sub‑structure changed".
 If you wanted individual `nanoseconds` only, you would also set bit 4.
 
 ### 10.1 Full example of exchange using BitSet
@@ -887,15 +911,16 @@ Wireshark display required:
    │  └─ Process: No (0)
    ├─ Status: OK (0xFF)
    ├─ Cached Field ID: (0x0001)
-   └─ value (0x43: double):
-   ├─ alarm (0x80: alarm_t)
-   │  ├─ severity (0x22: int32_t):
-   │  ├─ status (0x22: int32_t):
-   │  └─ message (0x60: string):
-   ├─ timeStamp (0x80: time_t)
-   │  ├─ secondsPastEpoch (0x23: int64_t):
-   │  ├─ nanoseconds (0x22: int32_t):
-   │  └─ userTag (0x22: int32_t):
+   └─ value (0x80: NTScalar)
+      ├─ value (0x43: double):
+      ├─ alarm (0x80: alarm_t)
+      │  ├─ severity (0x22: int32_t):
+      │  ├─ status (0x22: int32_t):
+      │  └─ message (0x60: string):
+      ├─ timeStamp (0x80: time_t)
+      │  ├─ secondsPastEpoch (0x23: int64_t):
+      │  ├─ nanoseconds (0x22: int32_t):
+      │  └─ userTag (0x22: int32_t):
 ```
 
 #### 10.1.1.2 monitor data message (only value + `timeStamp` changed)
@@ -1158,7 +1183,7 @@ An NTScalar structure would be encoded as:
 **Wireshark Display:**
 ```
 └─ value (0x80: NTScalar)
-   ├─ value (0x26: uint32_t):
+   ├─ value (0x43: double):
    ├─ alarm (0x80: alarm_t)
    │  ├─ severity (0x22: int32_t):
    │  ├─ status (0x22: int32_t):
