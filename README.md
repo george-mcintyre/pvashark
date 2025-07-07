@@ -850,7 +850,7 @@ If you wanted individual `nanoseconds` only, you would also set bit 4.
 
 ```text
 -- 8‑byte header -------------------------------------------------------
-CA 01 40 0D   34 00 00 00        # magic, ver, flags=0x40(server‑msg), cmd, size
+CA 02 40 0D   34 00 00 00        # magic, ver, flags=0x40(server‑msg), cmd, size
 -- payload ------------------------------------------------------------
 2A 00 00 00                     # requestID   (0x2A)
 08                              # subcommand  0x08  = INIT
@@ -868,11 +868,41 @@ FD 01 00                        # FULL_WITH_ID, id = 1   (little‑endian)
 
 The whole NTScalar description is sent once; the disector mus cache every (id → FieldDesc) found.
 
+Wireshark display required:
+
+```text
+└─ Process Variable Access Protocol
+   ├─ Magic: 0xCA
+   ├─ Version: 2
+   ├─ Flags: 0x40
+   │  ├─ Direction: server (1)
+   │  ├─ Byte order: LSB (0) 
+   │  └─ Message type: Application (0)
+   ├─ Command: MONITOR (0x2A)
+   ├─ Payload Size: 52
+   ├─ Server Channel ID: 1
+   ├─ Sub-command: 0x08
+   │  ├─ Init: No (1)
+   │  ├─ Destroy: No (0)
+   │  └─ Process: No (0)
+   ├─ Status: OK (0xFF)
+   ├─ Cached Field ID: (0x0001)
+   └─ value (0x43: double):
+   ├─ alarm (0x80: alarm_t)
+   │  ├─ severity (0x22: int32_t):
+   │  ├─ status (0x22: int32_t):
+   │  └─ message (0x60: string):
+   ├─ timeStamp (0x80: time_t)
+   │  ├─ secondsPastEpoch (0x23: int64_t):
+   │  ├─ nanoseconds (0x22: int32_t):
+   │  └─ userTag (0x22: int32_t):
+```
+
 #### 10.1.1.2 monitor data message (only value + `timeStamp` changed)
 
 ```text
 -- header --------------------------------------------------------------
-CA 01 40 0D   26 00 00 00        # payload is now 0x26 bytes
+CA 02 40 0D   26 00 00 00        # payload is now 0x26 bytes
 -- payload -------------------------------------------------------------
 2A 00 00 00                     # requestID   (same as before)
 00                              # subcommand  0x00  = DATA
@@ -892,6 +922,32 @@ indexed from 0, .. N-1.  And so we can directly use the bitmask to pull up the d
 
 Note: In that in this example ALL fields in timestamp are provided because the whole `timestamp_t` structure is referenced in the
 `BitSet`.  Meaning that we need to store the relationship between the elements stored in the cache.
+
+In Wireshark this should show as follows:
+
+```text
+└─ Process Variable Access Protocol
+   ├─ Magic: 0xCA
+   ├─ Version: 2
+   ├─ Flags: 0x40
+   │  ├─ Direction: server (1)
+   │  ├─ Byte order: LSB (0) 
+   │  └─ Message type: Application (0)
+   ├─ Command: MONITOR (0x2A)
+   ├─ Payload Size: 38
+   ├─ Server Channel ID: 1
+   ├─ Sub-command: 0x08
+   │  ├─ Init: No (1)
+   │  ├─ Destroy: No (0)
+   │  └─ Process: No (0)
+   ├─ Status: OK (0xFF)
+   ├─ Retrieved Field ID: (0x0001)
+   ├─ Change BitSet: 0b00000101
+   ├─ value (0x43: double): 12.345
+   ├─ secondsPastEpoch (0x23: int64_t): 1599999000
+   ├─ nanoseconds (0x22: int32_t): 150000000
+   └─ userTag (0x22: int32_t): 0
+```
 
 
 ---
