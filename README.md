@@ -564,11 +564,6 @@ The PVXS implementation maps these bytes exactly to the EPICS pvData enumeration
 | `0x80` | **struct**       |     `0x88` | —    | Composite structure               |
 | `0x81` | **union**        |     `0x89` | —    | Discriminated union               |
 | `0x82` | **any**          |     `0x8A` | —    | "variant *any*" type              |
-| `0xFD` | **[cache store]**|          — | —    | Store type definition in cache    |
-| `0xFE` | **[cache fetch]**|          — | —    | Fetch type definition from cache  |
-| `0xFF` | **null**         |          — | 0    | Null value marker                 |
-
-> **Note**: These are the actual TypeCodes from the PVXS implementation (`src/pvxs/data.h`). The original document incorrectly listed codes 0x00-0x22.
 
 
 ### 8.2 FieldDesc Encoding (on‑wire introspection)
@@ -831,6 +826,73 @@ For partial‑update messages a **BitSet** precedes the value stream.
 The *n*‑th bit set to `1` means "member *n* has been updated and its PVField appears in the payload".
 Unset bits indicate that the receiver should reuse its cached copy of that member.
 Bit numbering matches the depth‑first order of the `FieldDesc` tree.
+
+Example of breadth-first numbering used by `BitSet` fpr `NTScalar double`:
+
+```text
+0 value  (double)
+1 alarm          (structure)
+2 timeStamp      (structure)
+        ├─3 secondsPastEpoch (int64)
+        ├─4 nanoseconds      (int32)
+        └─5 userTag          (int32)
+6 display        (structure)
+7 control        (structure)
+8 valueAlarm     (structure)
+```
+
+Only the root indices matter when you flag “whole sub‑structure changed”.
+If you wanted individual `nanoseconds` only, you would also set bit 4.
+
+### 10.1 Full example of exchange using BitSet
+
+#### 10.1.1  `MONITOR INIT` (introspection only)
+
+```text
+-- 8‑byte header -------------------------------------------------------
+CA 01 40 0D   34 00 00 00        # magic, ver, flags=0x40(server‑msg), cmd, size
+-- payload ------------------------------------------------------------
+2A 00 00 00                     # requestID   (0x2A)
+08                              # subcommand  0x08  = INIT
+FF                              # Status      0xFF  = OK (no text)
+FD 01 00                        # FULL_WITH_ID, id = 1   (little‑endian)
+80                              # FieldDesc lead‑byte: structure, scalar
+15 "epics:nt/NTScalar:1.0"      # typeID (Size+UTF‑8)
+09                              # member count = 9
+   05 "value"   21              # double  (lead‑byte 0x21)
+   05 "alarm"   FD 02 00 83 …   # FULL_WITH_ID id=2  (alarm_t schema)
+   09 "timeStamp" FD 03 00 83…  # FULL_WITH_ID id=3  (timeStamp_t)
+   07 "display" FD 04 00 83…    # etc.
+   ...
+```
+
+The whole NTScalar description is sent once; the disector mus cache every (id → FieldDesc) found.
+
+#### 10.1.1.2 monitor data message (only value + `timeStamp` changed)
+
+```text
+-- header --------------------------------------------------------------
+CA 01 40 0D   26 00 00 00        # payload is now 0x26 bytes
+-- payload -------------------------------------------------------------
+2A 00 00 00                     # requestID   (same as before)
+00                              # subcommand  0x00  = DATA
+01 05                           # changedBitSet
+                                #   Size=1 byte, mask=0b00000101
+                                #                            ^bit0 (value)
+                                #                              ^bit2 (timeStamp)
+40 9C C6 F7 6E 58 2D 40         # value = 12.345 (IEEE754 little‑endian)
+00 00 00 00 00 60 EE 5E         # secondsPastEpoch = 1 599 999 000
+00 40 27 09                     # nanoseconds      = 150 000 000
+00 00 00 00                     # userTag          = 0
+00                              # overrunBitSet Size=0  (no overruns)
+```
+
+We use the Request ID to lookup the FieldDesc structure.  This contains the individual type IDs of the fields
+indexed from 0, .. N-1.  And so we can directly use the bitmask to pull up the definitions.
+
+Note: In that in this example ALL fields in timestamp are provided because the whole `timestamp_t` structure is referenced in the
+`BitSet`.  Meaning that we need to store the relationship between the elements stored in the cache.
+
 
 ---
 
