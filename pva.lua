@@ -321,12 +321,14 @@ local FieldRegistry = {}
 
 -- Initialize the registry
 FieldRegistry.data = {}
+FieldRegistry.roots = {}
 
 -- Add a field to the registry
 function FieldRegistry:addField(op_id, field_id, name, type_code, parent_field_id, type)
     -- Ensure op_id exists
     if not self.data[op_id] then
         self.data[op_id] = {}
+        self.roots[op_id] = self.data[op_id]
     end
 
     -- Determine the type string
@@ -358,6 +360,7 @@ end
 function FieldRegistry:resetFields(op_id)
     if self.data[op_id] then
         self.data[op_id] = nil
+        self.roots[op_id] = nil
         return true
     end
     return false
@@ -417,39 +420,23 @@ end
 -- Get a field by depth-first index within an op_id
 function FieldRegistry:getIndexedField(op_id, index)
     -- Get all fields for the op_id
-    local all_fields = self:getField(op_id)
+    local all_fields = self:getFields(op_id)
     if not all_fields or not next(all_fields) then
         return nil, nil  -- No fields exist for this op_id
     end
 
     -- Find the root field (the one that's not a sub-field of any other)
-    local root_field_id = nil
-    local all_sub_field_refs = {}
+    local root_field = self.roots[op_id]
 
-    -- Collect all sub-field references
-    for field_id, field in pairs(all_fields) do
-        for _, sub_field_id in ipairs(field.sub_field_refs) do
-            all_sub_field_refs[sub_field_id] = true
-        end
-    end
-
-    -- Find the field that's not referenced by any other (the root)
-    for field_id, field in pairs(all_fields) do
-        if not all_sub_field_refs[field_id] then
-            root_field_id = field_id
-            break
-        end
-    end
-
-    if not root_field_id then
+    if not root_field then
         return nil, nil  -- No root field found
     end
 
     -- Perform depth-first traversal
     local current_index = {value = 0}  -- Use table to pass by reference
 
-    local function depth_first_traverse(field_id, target_index, path_parts)
-        local current_field = self:getField(op_id, field_id)
+    local function depth_first_traverse(field, target_index, path_parts)
+        local current_field = field
         if not current_field then
             return nil, nil
         end
@@ -470,8 +457,8 @@ function FieldRegistry:getIndexedField(op_id, index)
         current_index.value = current_index.value + 1
 
         -- Recursively traverse sub-fields (depth-first)
-        for _, sub_field_id in ipairs(current_field.sub_field_refs) do
-            local path, result = depth_first_traverse(sub_field_id, target_index, current_path_parts)
+        for _, sub_field in ipairs(current_field.sub_fields) do
+            local path, result = depth_first_traverse(sub_field, target_index, current_path_parts)
             if result then
                 return path, result
             end
@@ -480,7 +467,7 @@ function FieldRegistry:getIndexedField(op_id, index)
         return nil, nil
     end
 
-    return depth_first_traverse(root_field_id, index, {})
+    return depth_first_traverse(root_field, index, {})
 end
 
 ----------------------------------------------
