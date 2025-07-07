@@ -392,9 +392,9 @@ sub‑commands are in **byte 0** of payload.  Most channel operations use the fo
       |         choices[5]: "Exponential"
       |         choices[6]: "Engineering"
       └─ control (0x80: control_t)
-         ├─ secondsPastEpoch (0x23: int64_t)
-         ├─ nanoseconds (0x22: int32_t)
-         └─ userTag (0x22: int32_t)
+         ├─ limitLow (0x43: double)
+         ├─ limitHigh (0x43: double)
+         └─ minStep (0x43: double)
 ```
 
 #### 4.4.2 Client GET Simple Scalar Byte
