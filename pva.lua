@@ -79,18 +79,18 @@ local status_codes = {
 }
 
 local nt_types = {
-    "epics:nt/NTScalar:1.0", "NTScalar",
-    "epics:nt/NTScalarArray:1.0", "NTScalarArray",
-    "epics:nt/NTEnum:1.0", "NTEnum",
-    "epics:nt/NTMatrix:1.0", "NTMatrix",
-    "epics:nt/NTURI:1.0", "NTURI",
-    "epics:nt/NameValue:1.0", "NameValue",
-    "epics:nt/NTTable:1.0", "NTTable",
-    "epics:nt/NTAttribute:1.0", "NTAttribute",
-    "epics:nt/NTMultiChannel:1.0", "NTMultiChannel",
-    "epics:nt/NTNDArray:1.0", "NTNDArray",
-    "epics:nt/NTHistogram:1.0", "NTHistogram",
-    "epics:nt/NTAggregate:1.0", "NTAggregate",
+    ["epics:nt/NTScalar:1.0"] = "NTScalar",
+    ["epics:nt/NTScalarArray:1.0"] = "NTScalarArray",
+    ["epics:nt/NTEnum:1.0"] = "NTEnum",
+    ["epics:nt/NTMatrix:1.0"] = "NTMatrix",
+    ["epics:nt/NTURI:1.0"] = "NTURI",
+    ["epics:nt/NameValue:1.0"] = "NameValue",
+    ["epics:nt/NTTable:1.0"] = "NTTable",
+    ["epics:nt/NTAttribute:1.0"] = "NTAttribute",
+    ["epics:nt/NTMultiChannel:1.0"] = "NTMultiChannel",
+    ["epics:nt/NTNDArray:1.0"] = "NTNDArray",
+    ["epics:nt/NTHistogram:1.0"] = "NTHistogram",
+    ["epics:nt/NTAggregate:1.0"] = "NTAggregate",
 }
 
 ----------------------------------------------
@@ -148,7 +148,7 @@ local TYPE_CODE_ANY_ARRAY               = 0x8A;
 ----------------------------------------------
 
 local FIELD_DESC_TYPE_FULL = 0xFD;      -- FULL_WITH_ID: full introspection + assign ID (two bytes) + FieldDesc
-local FIELD_DESC_TYPE_ID_ONLY = 0xFE;   -- ONLY_ID: reference existing ID (two bytes)
+local FIELD_DESC_TYPE_ID_ONLY = 0xFE;   -- ONLY_ID: reference existing ID (two bytes) + PVData values
 local FIELD_DESC_NULL = 0xFF;           -- NULL_TYPE: null field
 
 ----------------------------------------------
@@ -782,20 +782,28 @@ end
 
 
 function decodeStruct(remaining_buf, is_big_endian, op_id, field_id, parent_field_id, type_code, name)
-    -- get name
     local type_id
     type_id, remaining_buf = decodeString(remaining_buf, is_big_endian)
-    type_id = type_id or name
-    type_id = nt_types[type_id] or type_id
 
-    --type_id = name or type_id
+    local display_name
+    if type_id and type_id ~= "" and nt_types[type_id] then
+        -- Normative type: use short name
+        display_name = nt_types[type_id]
+    elseif name and name ~= "" then
+        -- Use the field name from the enclosing structure
+        display_name = name
+    elseif type_id and type_id ~= "" then
+        -- Fallback: use the type string
+        display_name = type_id
+    else
+        -- Final fallback: "value"
+        display_name = "value"
+    end
 
-    -- create struct field
-    local field = FieldRegistry:addField(op_id, field_id, type_id, type_code, parent_field_id)
+    local field = FieldRegistry:addField(op_id, field_id, display_name, type_code, parent_field_id)
 
-    print("Structure: " .. type_id)
+    print("Structure: " .. (display_name or ""))
 
-    -- get count
     local count
     count, remaining_buf = decodeSize(remaining_buf, is_big_endian)
 
@@ -809,23 +817,34 @@ function decodeStruct(remaining_buf, is_big_endian, op_id, field_id, parent_fiel
     return field, remaining_buf
 end
 
-function decodeUnion(remaining_buf, is_big_endian, op_id, field_id, parent_field_id, name, type_code, name)
-    -- get name
+function decodeUnion(remaining_buf, is_big_endian, op_id, field_id, parent_field_id, type_code, name)
     local type_id
     type_id, remaining_buf = decodeString(remaining_buf, is_big_endian)
-    type_id = type_id or name
-    type_id = nt_types[type_id] or type_id
 
-    -- create struct field
-    local field = FieldRegistry:addField(op_id, field_id, type_id, type_code, parent_field_id)
+    local display_name
+    if type_id and type_id ~= "" and nt_types[type_id] then
+        -- Normative type: use short name
+        display_name = nt_types[type_id]
+    elseif name and name ~= "" then
+        -- Use the field name from the enclosing structure
+        display_name = name
+    elseif type_id and type_id ~= "" then
+        -- Fallback: use the type string
+        display_name = type_id
+    else
+        -- Final fallback: "value"
+        display_name = "value"
+    end
 
-    -- get count
+    local field = FieldRegistry:addField(op_id, field_id, display_name, type_code, parent_field_id)
+
     local count
     count, remaining_buf = decodeSize(remaining_buf, is_big_endian)
 
     for i = 1, count do
         local field_name
         field_name, remaining_buf = decodeString(remaining_buf, is_big_endian)
+        -- (No debug print for subfields, to match struct style)
         remaining_buf = decodePVField(remaining_buf, nil, is_big_endian, op_id, nil, true, field_name)
     end
 
@@ -846,7 +865,7 @@ function decodeField(pvdata_buf, is_big_endian, op_id, field_id, parent_field_id
 
     local remaining_buf = pvdata_buf:range(1)
 
-    if type_code == TYPE_CODE_STRUCT or type_code == TYPE_CODE_STRUCT_ARRAY then
+    if type_code == TYPE_CODE_STRUCT or type_code == TYPE_CODE_STRUCT_ARRAY or type_code == TYPE_CODE_ANY or type_code == TYPE_CODE_ANY_ARRAY then
         return decodeStruct(remaining_buf, is_big_endian, op_id, field_id, parent_field_id, type_code, given_name)
     elseif type_code == TYPE_CODE_UNION or type_code == TYPE_CODE_UNION_ARRAY then
         return decodeUnion(remaining_buf, is_big_endian, op_id, field_id, parent_field_id, type_code, given_name)
@@ -1037,7 +1056,7 @@ function decodePVField(pvdata_buf, tree, is_big_endian, op_id, bitset_str, dont_
     local pvdata_type = pvdata_buf(0, 1):uint()
     if not pvdata_buf or pvdata_buf:len() < 2 then
         local field
-        field, remaining_buf = decodeField(pvdata_buf, is_big_endian, op_id, field_id, name)
+        field, remaining_buf = decodeField(pvdata_buf, is_big_endian, op_id, nil, nil, name)
 
         -- display the parsed field
         if dont_display == nil or dont_display ~= true then
@@ -1063,7 +1082,7 @@ function decodePVField(pvdata_buf, tree, is_big_endian, op_id, bitset_str, dont_
         remaining_buf = remaining_buf:range(2)
 
         -- Parse the FieldDesc that follows
-        local field, remaining_buf = decodeField(remaining_buf, is_big_endian, op_id, field_id, name)
+        local field, remaining_buf = decodeField(remaining_buf, is_big_endian, op_id, field_id, nil, name)
 
         -- display the parsed field
         if dont_display == nil or dont_display ~= true then
