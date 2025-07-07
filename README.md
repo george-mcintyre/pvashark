@@ -6,7 +6,7 @@ Builds on work by mdavidsaver in https://github.com/mdavidsaver/cashark
 
 This repo extends support to all PVData and Normative Data Types.
 
-# EPICS PVAccess — Wire Protocol Specification
+# Decoding EPICS PVAccess — Wire Protocol Specification
 
 This document describes the PVAccess wire protocol used by EPICS 7 for process variable communication (PV Access). The protocol supports complex structured data types called Normative Types (NT) and provides more sophisticated data handling than traditional Channel Access.
 
