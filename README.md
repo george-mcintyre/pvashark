@@ -511,9 +511,11 @@ Alignment: Except for segmentation padding, structures are packed; there is **no
 
 ### 7.1 Why introspection exists
 
-pvAccess allows arbitrary, nested pvData structures. To avoid resending the same type description every time,
+PVAccess allows arbitrary, nested pvData structures. To avoid resending the same type description every time,
 the sender assigns a 16‑bit type‑ID and sends the full description once. Later messages can refer to the same
-type with the much shorter "ID‑only" form. The rules are normative: a sender must send the full form before the first ID‑only reference, and the mapping is per connection and per direction  ￼.
+type with the much shorter "ID‑only" form. 
+
+The rules are normative: a sender must send the full form before the first `ID‑only` reference, and the mapping is per connection and per direction.
 
 | Lead byte(s)                        | Name                       | Payload that follows                                                                |
 |-------------------------------------|----------------------------|-------------------------------------------------------------------------------------|
@@ -523,7 +525,7 @@ type with the much shorter "ID‑only" form. The rules are normative: a sender m
 | `0xFC` `<id>` `<tag>` `<FieldDesc>` | `FULL_TAGGED_ID_TYPE_CODE` | As above plus a 32‑bit tag used only on lossy transports.                           |
 | `0x00` ... `0xDF`                   | `FULL_TYPE_CODE`           | Stand‑alone FieldDesc with no ID (rare in TCP; mainly inside Variant‑Union values). |
 
-#### 7.1.1 Where each form is seen in pvAccess messages
+#### 7.1.1 Where each form is seen in PVAccess messages
 
 ##### 7.1.1.1  `INIT` responses (server → client)
 
@@ -539,9 +541,9 @@ type with the much shorter "ID‑only" form. The rules are normative: a sender m
 | Beacon / Validation      | serverStatusIF, etc.       | May be NULL_TYPE_CODE if server sends no status. |                         |
 
 
-Complex payloads start with a **FieldDesc tree** that fully describes the `PVStructure` or `PVScalarArray` layout.  
-The descriptors are **interned** per connection; both sides cache them by integer `<id>` to avoid resending.  
-Whenever a sender wishes to refer to an already‑sent layout it can send the compact `ONLY_ID_TYPE_CODE` form instead of repeating the full tree.
+- Complex payloads start with a **FieldDesc tree** that fully describes the `PVStructure` or `PVScalarArray` layout.  
+- The descriptors are **interned** per connection; both sides cache them by integer `<id>` to avoid resending.  
+- Whenever a sender wishes to refer to an already‑sent layout it can send the compact `ONLY_ID_TYPE_CODE` form instead of repeating the full tree.
 
 ##### 7.1.1.2  Data responses (`GET`, `MONITOR` updates, `ARRAY` slices…)
 
@@ -554,9 +556,9 @@ PVField valueData      // encoded per FieldDesc already cached
 (optional BitSet overrunBitSet)
 ```
 
-For these messages we must look up the cached `FieldDesc` using the `type‑ID` that was assigned in the corresponding `INIT` step.  
-Then we will know the field name, and type (so how many bytes to pull and how to display them). The bit-set will show us what fields
-to get from the cached info and therefore how to decode the bytes that follow. 
+> For these messages we must look up the cached `FieldDesc` using the `type‑ID` that was assigned in the corresponding `INIT` step.  
+> Then we will know the field name, and type (so how many bytes to pull and how to display them).  
+> The bit-set will show us what fields to get from the cached info and therefore how to decode the bytes that follow.   
 
 ##### 7.1.1.3  Requests originating from the client
 
@@ -570,7 +572,7 @@ The PVXS implementation maps these bytes exactly to the EPICS pvData enumeration
 
 ### 8.1 Standard Type Codes
 
-**PVXS TypeCodes** (from `src/pvxs/data.h`):
+**PVXS TypeCodes** (from `src/pvxs/data.h`)
 
 |   Code | Kind             | Array code | Size | Description                       |
 |-------:|------------------|-----------:|------|-----------------------------------|
@@ -671,17 +673,17 @@ A **double[16]** fixed array: TypeCode `kind=010` (float) + `11` (fixed array) +
 
 A **NTScalar** for **double**: TypeCode `0b10000 000` → `0x80` (`kind=100` (complex) + `00` (non-array) + `000` (struct))
   - `0x80` TypeCode (struct)
-   - `0x15 65 70 69 63 73 3a 6e 74 2f 4e 54 53 63 61 6c 61 72 3a 31 2e 30` Type ID
-   - `21` characters `"epics:nt/NTScalar:1.0"` 
-   - (Type ID required for struct/union only) 
+    - `0x15 65 70 69 63 73 3a 6e 74 2f 4e 54 53 63 61 6c 61 72 3a 31 2e 30` Type ID
+    - `21` characters `"epics:nt/NTScalar:1.0"` 
+    - (Type ID required for struct/union only) 
  - `0x06` Field Count (size-encoded = 6 fields)
  - FIELD 1: "value"
-   - `0x05 76 61 6c 75 65` Field name
-     - `5` characters `"value"`
-   - `0x43` TypeCode for **scalar double**: `0b01000 011` (`kind=010` floating point + `00` non-array + `011` double)
-   - Optional: 8-byte value (depending on introspection type)
+    - `0x05 76 61 6c 75 65` Field name
+      - `5` characters `"value"`
+    - `0x43` TypeCode for **scalar double**: `0b01000 011` (`kind=010` floating point + `00` non-array + `011` double)
+    - Optional: 8-byte value (depending on introspection type)
  - Other Normative Type fields for NTScalar (`descriptor`, `alarm`, `timeStamp`, `display`, `control`)
-   - Each field has its own name, TypeCode, and optional values
+    - Each field has its own `Field name`, `TypeCode`, and optional values
 
 ---
 
@@ -703,7 +705,7 @@ A **NTScalar** for **double**: TypeCode `0b10000 000` → `0x80` (`kind=100` (co
 
 **Wireshark Display:**
 ```
-└─ value (0x22: int32_t):
+└─ value (0x22: int32_t)
 ```
 
 **Simple Structure:**
@@ -721,8 +723,8 @@ A **NTScalar** for **double**: TypeCode `0b10000 000` → `0x80` (`kind=100` (co
 **Wireshark Display:**
 ```
 └─ value (0x80: MyStruct)
-   ├─ field1 (0x22: int32_t):
-   └─ field2 (0x43: double):
+   ├─ field1 (0x22: int32_t)
+   └─ field2 (0x43: double)
 ```
 
 **Union:**
@@ -740,8 +742,8 @@ A **NTScalar** for **double**: TypeCode `0b10000 000` → `0x80` (`kind=100` (co
 **Wireshark Display:**
 ```
 └─ value (0x81: MyUnion)
-   ├─ choice1 (0x22: int32_t):
-   └─ choice2 (0x60: string):
+   ├─ choice1 (0x22: int32_t)
+   └─ choice2 (0x60: string)
 ```
 
 **Nested Structure:**
@@ -767,11 +769,11 @@ A **NTScalar** for **double**: TypeCode `0b10000 000` → `0x80` (`kind=100` (co
 **Wireshark Display:**
 ```
 └─ value (0x80: Container)
-   ├─ value (0x26: uint32_t):
+   ├─ value (0x26: uint32_t)
    └─ alarm (0x80: alarm_t)
-      ├─ severity (0x22: int32_t):
-      ├─ status (0x22: int32_t):
-      └─ message (0x60: string):
+      ├─ severity (0x22: int32_t)
+      ├─ status (0x22: int32_t)
+      └─ message (0x60: string)
 ```
 
 **Structure Array:**
@@ -790,8 +792,8 @@ A **NTScalar** for **double**: TypeCode `0b10000 000` → `0x80` (`kind=100` (co
 **Wireshark Display:**
 ```
 └─ value (0x88: Point[])
-   ├─ x (0x22: int32_t):
-   └─ y (0x22: int32_t):
+   ├─ x (0x22: int32_t)
+   └─ y (0x22: int32_t)
 ```
 
 ### 8.6 Tree Traversal
@@ -805,7 +807,7 @@ FieldDesc trees are:
 
 ### 8.7 Type‑cache shortcuts
 
-To avoid re‑sending large type trees, PVXS supports the pvAccess **type‑cache op‑codes**:
+To avoid re‑sending large type trees, PVXS supports the PVAccess **type‑cache op‑codes**:
 - *`0xFD key FieldDesc`* → *store in cache*
 - *`0xFE key`* → *reuse cached tree* (key is 16‑bit)
 
@@ -912,15 +914,15 @@ Wireshark display required:
    ├─ Status: OK (0xFF)
    ├─ Cached Field ID: (0x0001)
    └─ value (0x80: NTScalar)
-      ├─ value (0x43: double):
+      ├─ value (0x43: double)
       ├─ alarm (0x80: alarm_t)
-      │  ├─ severity (0x22: int32_t):
-      │  ├─ status (0x22: int32_t):
-      │  └─ message (0x60: string):
+      │  ├─ severity (0x22: int32_t)
+      │  ├─ status (0x22: int32_t)
+      │  └─ message (0x60: string)
       ├─ timeStamp (0x80: time_t)
-      │  ├─ secondsPastEpoch (0x23: int64_t):
-      │  ├─ nanoseconds (0x22: int32_t):
-      │  └─ userTag (0x22: int32_t):
+      │  ├─ secondsPastEpoch (0x23: int64_t)
+      │  ├─ nanoseconds (0x22: int32_t)
+      │  └─ userTag (0x22: int32_t)
 ```
 
 #### 10.1.1.2 monitor data message (only value + `timeStamp` changed)
@@ -1183,15 +1185,15 @@ An NTScalar structure would be encoded as:
 **Wireshark Display:**
 ```
 └─ value (0x80: NTScalar)
-   ├─ value (0x43: double):
+   ├─ value (0x43: double)
    ├─ alarm (0x80: alarm_t)
-   │  ├─ severity (0x22: int32_t):
-   │  ├─ status (0x22: int32_t):
-   │  └─ message (0x60: string):
+   │  ├─ severity (0x22: int32_t)
+   │  ├─ status (0x22: int32_t)
+   │  └─ message (0x60: string)
    ├─ timeStamp (0x80: time_t)
-   │  ├─ secondsPastEpoch (0x23: int64_t):
-   │  ├─ nanoseconds (0x22: int32_t):
-   │  └─ userTag (0x22: int32_t):
+   │  ├─ secondsPastEpoch (0x23: int64_t)
+   │  ├─ nanoseconds (0x22: int32_t)
+   │  └─ userTag (0x22: int32_t)
 ```
 
 Normative‑type instances declare themselves by sending a `FieldDesc` whose **top‑level ID string** equals the NT name (e.g. `"epics:nt/NTScalar:1.0"`) so that generic GUIs can recognise and render them automatically.
@@ -1258,7 +1260,7 @@ Arrays are fundamental to PVA protocol design. All basic types can be arrays:
 
 1. EPICS 7 Process Variable Access Protocol Specification
 2. EPICS Normative Types Specification
-3. pvAccessCPP source code (GitHub: epics-base/pvAccessCPP)
+3. PVAccessCPP source code (GitHub: epics-base/PVAccessCPP)
 4. EPICS Base 7 Channel Access vs PV Access comparison
 5. Captured network traffic analysis (July 2025)
 6. PVXS Protocol Documentation (GitHub: epics-base/pvxs)
