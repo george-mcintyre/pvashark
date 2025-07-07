@@ -144,28 +144,12 @@ local TYPE_CODE_UNION_ARRAY             = 0x89;
 local TYPE_CODE_ANY_ARRAY               = 0x8A;
 
 ----------------------------------------------
--- Cache and special codes
+-- Introspection (PVData) encoding types
 ----------------------------------------------
 
-local CACHE_STORE_CODE                  = 0xFD;
-local CACHE_FETCH_CODE                  = 0xFE;
-local TYPE_CODE_NULL                    = 0xFF;
-
-----------------------------------------------
--- Introspection (Field) encoding types
-----------------------------------------------
-
-local FIELD_DESC_TYPE_FULL = 0xFD;      -- FULL_WITH_ID: full introspection + assign ID
-local FIELD_DESC_TYPE_ID_ONLY = 0xFE;   -- ONLY_ID: reference existing ID
+local FIELD_DESC_TYPE_FULL = 0xFD;      -- FULL_WITH_ID: full introspection + assign ID (two bytes) + FieldDesc
+local FIELD_DESC_TYPE_ID_ONLY = 0xFE;   -- ONLY_ID: reference existing ID (two bytes)
 local FIELD_DESC_NULL = 0xFF;           -- NULL_TYPE: null field
-
-----------------------------------------------
--- Field content types (after FULL_WITH_ID)
-----------------------------------------------
-
-local FIELD_DESC_DETAIL_INTROSPECTION = 0x01;  -- Only structure definition, no values
-local FIELD_DESC_DETAIL_VALUES        = 0x02;  -- Only values (with bitset), no introspection (placeholder)
-local FIELD_DESC_DETAIL_ALL           = 0x03;  -- Both introspection and values (with bitset) (placeholder)
 
 ----------------------------------------------
 -- TypeCode to name mapping table
@@ -205,20 +189,6 @@ local PVD_TYPES = {
     [TYPE_CODE_STRUCT_ARRAY]            = "struct[]",
     [TYPE_CODE_UNION_ARRAY]             = "union[]",
     [TYPE_CODE_ANY_ARRAY]               = "any[]",
-
-    -- Special/cache codes
-    [CACHE_STORE_CODE]                  = "cache_store",
-    [CACHE_FETCH_CODE]                  = "cache_fetch",
-    [TYPE_CODE_NULL]                    = "null",
-
-    -- Introspection (Field) encoding types
-    [FIELD_DESC_TYPE_FULL]        = "introspection_full_id",
-    [FIELD_DESC_TYPE_ID_ONLY]        = "introspection_only_id",
-    [FIELD_DESC_NULL]           = "introspection_null",
-
-    [FIELD_DESC_DETAIL_INTROSPECTION]      = "introspectionOnly",
-    [FIELD_DESC_DETAIL_VALUES]            = "introspectionOnly",
-    [FIELD_DESC_DETAIL_ALL]               = "introspectionOnly"
 }
 
 ----------------------------------------------
@@ -344,6 +314,153 @@ pva.fields = {
 }
 
 ----------------------------------------------
+-- The Operation ID PVField Cache
+----------------------------------------------
+
+local FieldRegistry = {}
+
+-- Initialize the registry
+FieldRegistry.data = {}
+
+-- Add a field to the registry
+function FieldRegistry:addField(op_id, field_id, name, type_code, parent_field_id)
+    -- Ensure op_id exists
+    if not self.data[op_id] then
+        self.data[op_id] = {}
+    end
+
+    -- Create the field entry
+    local field = {
+        name = name,
+        type_code = type_code,
+        sub_field_refs = {}  -- Initialize as empty table
+    }
+
+    -- Store the field
+    self.data[op_id][field_id] = field
+
+    -- If parent_field_id is provided, add this field as a sub-field of the parent
+    if parent_field_id then
+        local parent_field = self:getField(op_id, parent_field_id)
+        if parent_field then
+            table.insert(parent_field.sub_field_refs, field_id)
+        end
+    end
+
+    return field  -- Return the field object for immediate use
+end
+
+-- Reset all fields for a specific op_id
+function FieldRegistry:resetFields(op_id)
+    if self.data[op_id] then
+        self.data[op_id] = nil
+        return true
+    end
+    return false
+end
+
+-- Check if a field exists
+function FieldRegistry:hasField(op_id, field_id)
+    return self.data[op_id] and self.data[op_id][field_id] ~= nil
+end
+
+-- Get a field from the registry
+function FieldRegistry:getField(op_id, field_id)
+    if self.hasField(op_id, field_id) then
+        return self.data[op_id][field_id]
+    end
+    return nil
+end
+
+-- Get sub-field references for a field
+function FieldRegistry:getSubFieldRefs(op_id, field_id)
+    local field = self:getField(op_id, field_id)
+    if field then
+        return field.sub_field_refs
+    end
+    return {}
+end
+
+-- Get actual sub-field objects (resolves references)
+function FieldRegistry:getSubFields(op_id, field_id)
+    local sub_field_refs = self:getSubFieldRefs(op_id, field_id)
+    local sub_fields = {}
+
+    for i, sub_field_id in ipairs(sub_field_refs) do
+        local sub_field = self:getField(op_id, sub_field_id)
+        if sub_field then
+            sub_fields[i] = sub_field
+        end
+    end
+
+    return sub_fields
+end
+
+-- Get all fields for an op_id
+function FieldRegistry:getFields(op_id)
+    return self.data[op_id] or {}
+end
+
+-- Get a field by depth-first index within an op_id
+function FieldRegistry:getIndexedField(op_id, index)
+    -- Get all fields for the op_id
+    local all_fields = self:getFieldsForOpid(op_id)
+    if not all_fields or not next(all_fields) then
+        return nil  -- No fields exist for this op_id
+    end
+
+    -- Find the root field (the one that's not a sub-field of any other)
+    local root_field_id = nil
+    local all_sub_field_refs = {}
+
+    -- Collect all sub-field references
+    for field_id, field in pairs(all_fields) do
+        for _, sub_field_id in ipairs(field.sub_field_refs) do
+            all_sub_field_refs[sub_field_id] = true
+        end
+    end
+
+    -- Find the field that's not referenced by any other (the root)
+    for field_id, field in pairs(all_fields) do
+        if not all_sub_field_refs[field_id] then
+            root_field_id = field_id
+            break
+        end
+    end
+
+    if not root_field_id then
+        return nil  -- No root field found
+    end
+
+    -- Perform depth-first traversal
+    local current_index = {value = 0}  -- Use table to pass by reference
+
+    local function depth_first_traverse(field_id, target_index)
+        -- Check if this is the index we're looking for
+        if current_index.value == target_index then
+            return self:getField(op_id, field_id)
+        end
+
+        current_index.value = current_index.value + 1
+
+        -- Recursively traverse sub-fields (depth-first)
+        local current_field = self:getField(op_id, field_id)
+        if current_field then
+            for _, sub_field_id in ipairs(current_field.sub_field_refs) do
+                local result = depth_first_traverse(sub_field_id, target_index)
+                if result then
+                    return result
+                end
+            end
+        end
+
+        return nil
+    end
+
+    return depth_first_traverse(root_field_id, index)
+end
+
+----------------------------------------------
 -- Utility functions
 ----------------------------------------------
 
@@ -361,30 +478,23 @@ local function getUint(src, is_big_endian)
 end
 
 ----------------------------------------------
---- getInt: get a signed integer with the correct byte order
---- @param src to read the int from
---- @param is_big_endian flag to indicate the bigendianness
-----------------------------------------------
-local function getInt(src, is_big_endian)
-    if is_big_endian == nil or is_big_endian then
-        return src:int()
-    else
-        return src:le_int()
-    end
-end
-
-----------------------------------------------
---- getInt64: get a signed 64-bit integer with the correct byte order
+--- getUint32: get an unsigned 32-bit integer with the correct byte order
 --- @param src to read the int64 from
 --- @param is_big_endian flag to indicate the bigendianness
 ----------------------------------------------
-local function getInt64(src, is_big_endian)
-    if is_big_endian == nil or is_big_endian then
-        return src:int64()
-    else
-        return src:le_int64()
-    end
+local function getUint32(src, is_big_endian)
+    return getUint(src(0,2), is_big_endian)
 end
+
+----------------------------------------------
+--- getUint64: get an unsigned 64-bit integer with the correct byte order
+--- @param src to read the int64 from
+--- @param is_big_endian flag to indicate the bigendianness
+----------------------------------------------
+local function getUint64(src, is_big_endian)
+    return getUint(src(0,4), is_big_endian)
+end
+
 
 ----------------------------------------------
 -- decodeSize: decode a size from a TvbRange buffer using 3-tier encoding
@@ -451,27 +561,40 @@ local function decodeString(buf, is_big_endian)
     end
 end
 
--- Parse Type ID string
+-- Parse Type ID string (optional)
 local function getTypeId(message_body, is_big_endian)
     local display_name = nil
     if message_body:len() > 0 then
-        local type_id, remaining_buf = decodeString(message_body, is_big_endian)
-        if type_id and type_id:len() > 0 then
-            local type_id_str = type_id:string()
-            display_name = type_id_str
+        -- Check if this looks like a string by examining the first byte
+        local first_byte = message_body(0, 1):uint()
 
-            -- Look for normative type translation
-            for i = 1, #nt_types, 2 do
-                if nt_types[i] == type_id_str then
-                    display_name = nt_types[i + 1]
-                    break
+        -- If first byte is 0, there's no type ID string
+        if first_byte == 0 then
+            -- Skip the 0x00 byte and return
+            return nil, message_body(1):tvb(), nil
+        elseif first_byte <= 50 and first_byte > 0 then
+            -- If first byte is 1-50, it might be a string length
+            local type_id, remaining_buf = decodeString(message_body, is_big_endian)
+            if type_id and remaining_buf then
+                -- Even if the string is empty, we should advance the buffer
+                message_body = remaining_buf
+                if type_id:len() > 0 then
+                    local type_id_str = type_id:string()
+                    display_name = type_id_str
+
+                    -- Look for normative type translation
+                    for i = 1, #nt_types, 2 do
+                        if nt_types[i] == type_id_str then
+                            display_name = nt_types[i + 1]
+                            break
+                        end
+                    end
                 end
             end
-
-            message_body = remaining_buf
         end
+        -- If first byte is > 50, it's probably a field count, not a string length
     end
-    return type_id, message_body, display_name
+    return nil, message_body, display_name
 end
 
 
@@ -613,177 +736,215 @@ local function decodeStatus (message_body, tree, is_big_endian)
 end
 
 
--- Parse structure FieldDesc: field count + fields
-local function parseStructDesc(message_body, is_big_endian, tree, type_code)
-    -- Read field count
-    if (message_body ~= nil and message_body:len() > 0) then
-        local field_count, message_body = decodeSize(message_body, is_big_endian)
-        if (field_count ~= nil and message_body ~= nil and message_body:len() > 0) then
-            -- Parse each field: name + FieldDesc
-            for i = 1, field_count do
-                local field_name, message_body = decodeString(message_body, is_big_endian)
-                message_body = parseFieldDesc(message_body, is_big_endian, tree, field_name)
-            end
+-- These old functions are no longer needed - replaced by data-driven parsing
+
+-- ===================================================================
+-- MONITOR-INIT PARSER (uses unified FieldDesc system)
+-- ===================================================================
+
+function decodePVData(pvdata_buf, pkt, tree, is_big_endian, label, ioid)
+    if not pvdata_buf or pvdata_buf:len() == 0 then
+        return
+    end
+
+    local pvdata_type = pvdata_buf(0, 1):uint()
+    local remaining_buf = pvdata_buf:range(1)
+
+    if pvdata_buf:len() ~= 0 and pvdata_type ~= 0xFF then
+        local pvd_tree = tree:add(pvdata_buf, label or "PVData Body")
+        remaining_buf = parsePVDataWithIntrospection(pvdata_buf, is_big_endian, pvd_tree)
+    end
+    if remaining_buf and remaining_buf:len() then tree:add(remaining_buf, "Unrecognised Op Data") end
+end
+
+-- Parse PVData that may start with introspection types (0xFD, 0xFE, 0xFF)
+function parsePVDataWithIntrospection(buf, is_big_endian, tree)
+    if not buf or buf:len() == 0 then
+        return buf
+    end
+
+    -- Check first byte to determine introspection type
+    local first_byte = buf(0, 1):uint()
+
+    if first_byte == FIELD_DESC_TYPE_FULL then
+        -- 0xFD: FULL_WITH_ID - full introspection + 16-bit type ID + FieldDesc
+        if buf:len() < 3 then
+            tree:add_expert_info(PI_MALFORMED, PI_ERROR, "Truncated FULL_WITH_ID introspection")
+            return buf
         end
-    end
 
-    return message_body
-end
+        local type_id = getUint(buf(1, 2), is_big_endian)
+        tree:add(buf(0, 3), string.format("Introspection: FULL_WITH_ID (Type ID: %d)", type_id))
 
--- Parse union FieldDesc: field count + fields
-local function parseUnionDesc(message_body, is_big_endian, tree, type_code)
-    -- Read field count
-    if (message_body ~= nil and message_body:len() > 0) then
-        local field_count, message_body = decodeSize(message_body, is_big_endian)
-        if (field_count ~= nil and message_body ~= nil and message_body:len() > 0) then
-            -- Parse each field: name + FieldDesc
-            for i = 1, field_count do
-                local field_name, message_body = decodeString(message_body, is_big_endian)
-                message_body = parseFieldDesc(message_body, is_big_endian, tree, field_name)
-            end
+        -- Parse the FieldDesc that follows - advance buffer by 3 bytes
+        local field_buf = buf(3):tvb()
+        print(string.format("FULL_WITH_ID: type_id=%d, field_buf_len=%d, first_byte=0x%02X",
+              type_id, field_buf:len(), field_buf:len() > 0 and field_buf(0,1):uint() or 0))
+        parsePVStructure(field_buf, is_big_endian, tree, "value")
+
+    elseif first_byte == FIELD_DESC_TYPE_ID_ONLY then
+        -- 0xFE: ONLY_ID - reference to cached type + PVData values
+        if buf:len() < 3 then
+            tree:add_expert_info(PI_MALFORMED, PI_ERROR, "Truncated ONLY_ID introspection")
+            return buf
         end
+
+        local type_id = getUint(buf(1, 2), is_big_endian)
+        tree:add(buf(0, 3), string.format("Introspection: ONLY_ID (Type ID: %d)", type_id))
+
+        -- TODO: Look up cached type and parse values accordingly
+        local values_buf = buf(3):tvb()
+        tree:add(values_buf, "PVData Values (cached type lookup not implemented)")
+
+    elseif first_byte == FIELD_DESC_NULL then
+        -- 0xFF: NULL_TYPE - null field
+        tree:add(buf(0, 1), "Introspection: NULL_TYPE")
+        return buf(1):tvb()
+
+    else
+        -- Not an introspection type - parse as direct FieldDesc + values
+        parsePVStructure(buf, is_big_endian, tree, "value")
     end
 
-    return message_body
+    return nil -- Consumed all data
 end
 
-local function parseCacheStore(buf, is_big_endian, tree)
-    if buf and buf:len() >= 2 then
-        local cache_key = getUint(buf(0, 2), is_big_endian)
-
-        -- Parse the stored FieldDesc
-        buf = buf(2)
-        buf = parseFieldDesc(buf, is_big_endian, tree, nil)
+-- Parse a PVStructure: FieldDesc followed by values
+function parsePVStructure(buf, is_big_endian, tree, field_name)
+    if not buf or buf:len() == 0 then
+        return buf
     end
-    return buf
-end
 
-local function parseCacheFetch(buf, is_big_endian, tree)
-    if buf and buf:len() >= 2 then
-        local cache_key = getUint(buf(0, 2), is_big_endian)
-        if ( buf:len() == 2 ) then
-            return nil
-        end
-        buf = buf(2)
+    -- For INIT messages, we only have the FieldDesc (structure definition) without values
+    -- Parse the complete FieldDesc structure - do NOT go through introspection detection
+    -- as this is only for top-level PVData, not nested FieldDesc structures
+    local remaining_buf = parseFieldDescOnly(buf, is_big_endian, tree, field_name)
+
+    -- In INIT messages, there are typically no values after the FieldDesc
+    -- Any remaining data would be additional fields or padding
+    if remaining_buf and remaining_buf:len() > 0 then
+        tree:add(remaining_buf, string.format("Remaining data (%d bytes)", remaining_buf:len()))
     end
-    return buf
+
+    return nil
 end
 
-parseFieldDesc = function(buf, is_big_endian, tree, field_name)
+-- Parse only the FieldDesc part (structure definition) without values
+function parseFieldDescOnly(buf, is_big_endian, tree, field_name)
     if not buf or buf:len() < 1 then
         return buf
     end
 
     -- Read Type code
     local type_code = buf(0, 1):uint()
-    buf = buf:range(1)
+    local remaining_buf = buf(1):tvb()
     local type_name = PVD_TYPES[type_code] or string.format("unknown(0x%02X)", type_code)
 
     local field_tree
 
-    -- Handle introspection types first (0xFD, 0xFE, 0xFF)
-    if type_code == FIELD_DESC_TYPE_FULL then
-        -- FULL_WITH_ID: 0xFD + 16-bit type-ID + FieldDesc
-        if buf:len() < 2 then
-            return buf
-        end
+    if type_code == TYPE_CODE_STRUCT or type_code == 0xFD then
+        -- Parse struct: optional Type ID + field count + field definitions
+        -- Note: 0xFD in FieldDesc context appears to be an extended struct type
+        local type_id, updated_buf, translated_name = getTypeId(remaining_buf, is_big_endian)
+        remaining_buf = updated_buf
 
-        local type_id = getUint(buf(0, 2), is_big_endian)
-        local display_name = field_name and string.format("%s (FULL_ID: %d)", field_name, type_id)
-                or string.format("FULL_ID: %d", type_id)
-        field_tree = tree:add(buf(0, 2), display_name)
-        buf = buf(2):tvb()
-
-        -- Parse the following FieldDesc recursively
-        if buf:len() > 0 then
-            buf = parseFieldDesc(buf, is_big_endian, field_tree, nil)
-        end
-
-    elseif type_code == FIELD_DESC_TYPE_ID_ONLY then
-        -- ONLY_ID: 0xFE + 16-bit type-ID (reference to cached type)
-        if buf:len() < 2 then
-            return buf
-        end
-
-        local type_id = getUint(buf(0, 2), is_big_endian)
-        local display_name = field_name and string.format("%s (ONLY_ID: %d)", field_name, type_id)
-                or string.format("ONLY_ID: %d", type_id)
-        field_tree = tree:add(buf(0, 2), display_name)
-        buf = buf(2):tvb()
-
-    elseif type_code == FIELD_DESC_NULL then
-        -- NULL_TYPE: 0xFF (null field)
-        local display_name = field_name and string.format("%s (NULL)", field_name)
-                or "NULL"
-        field_tree = tree:add(type_code, display_name)
-
-    elseif type_code == TYPE_CODE_STRUCT or type_code == TYPE_CODE_UNION then
-        -- Regular struct/union with optional Type ID string
-        local type_id, buf, translated_name = getTypeId(buf, is_big_endian)
-        local clean_name = "struct"
-        if type_code == TYPE_CODE_UNION then clean_name = "union" end
-
-        if translated_name then
-            clean_name = translated_name
-        elseif type_id and type_id:len() > 0 then
-            -- Extract clean type name
+        local clean_name = translated_name or "struct"
+        if type_id and type_id:len() > 0 and not translated_name then
             local type_id_str = type_id:string()
             clean_name = type_id_str:match("nt/([^:]+)") or type_id_str:match("([^:]+)") or type_id_str
-        else
-            clean_name = type_name
         end
 
-        -- Create field display with standard format: fieldname (0xHH: typename)
         local display_name = field_name and string.format("%s (0x%02X: %s)", field_name, type_code, clean_name)
                 or string.format("(0x%02X: %s)", type_code, clean_name)
         field_tree = tree:add(type_code, display_name)
 
-        -- Parse struct/union content
-        if type_code == TYPE_CODE_STRUCT then
-            buf = parseStructDesc(buf, is_big_endian, field_tree, type_code)
-        elseif type_code == TYPE_CODE_UNION then
-            buf = parseUnionDesc(buf, is_big_endian, field_tree, type_code)
+        -- Parse struct fields
+        remaining_buf = parseStructDescOnly(remaining_buf, is_big_endian, field_tree)
+
+    elseif type_code == TYPE_CODE_UNION then
+        -- Parse union: optional Type ID + field count + field definitions
+        local type_id, updated_buf, translated_name = getTypeId(remaining_buf, is_big_endian)
+        remaining_buf = updated_buf
+
+        local clean_name = translated_name or type_name
+        if type_id and type_id:len() > 0 and not translated_name then
+            local type_id_str = type_id:string()
+            clean_name = type_id_str:match("nt/([^:]+)") or type_id_str:match("([^:]+)") or type_id_str
         end
 
-    elseif type_code == CACHE_STORE_CODE then
-        -- Cache operations (context-dependent use of 0xFD)
-        buf = parseCacheStore(buf, is_big_endian, field_tree)
-    elseif type_code == CACHE_FETCH_CODE then
-        -- Cache operations (context-dependent use of 0xFE)
-        buf = parseCacheFetch(buf, is_big_endian, field_tree)
+        local display_name = field_name and string.format("%s (0x%02X: %s)", field_name, type_code, clean_name)
+                or string.format("(0x%02X: %s)", type_code, clean_name)
+        field_tree = tree:add(type_code, display_name)
+
+        -- Parse union fields
+        remaining_buf = parseUnionDescOnly(remaining_buf, is_big_endian, field_tree)
+
     else
-        -- Scalar types and arrays - just TypeCode, no additional parsing needed
+        -- Scalar types and arrays - just TypeCode, no additional structure
+        -- NOTE: In FieldDesc context, 0xFD/0xFE/0xFF are treated as regular type codes, not introspection
         local display_name = field_name and string.format("%s (0x%02X: %s)", field_name, type_code, type_name)
                 or string.format("(0x%02X: %s)", type_code, type_name)
         field_tree = tree:add(type_code, display_name)
     end
 
-    return buf
+    return remaining_buf
 end
 
--- ===================================================================
--- MONITOR-INIT PARSER (uses unified FieldDesc system)
--- ===================================================================
-
-
-
-function decodePVData(buf, pkt, t, is_big_endian, label)
+-- Parse structure FieldDesc only (no values): field count + field definitions
+function parseStructDescOnly(buf, is_big_endian, tree)
     if not buf or buf:len() == 0 then
-        return
+        return buf
     end
 
-    local pvd_tree = t:add(placeholder, label or "PVData Body")
-
-    if buf:len() == 0 then
-        pvd_tree:append_text(" [Empty]")
-        return pvd_tree
+    local field_count, remaining_buf = decodeSize(buf, is_big_endian)
+    if not field_count or not remaining_buf then
+        return buf
     end
 
-    parseFieldDesc(buf, is_big_endian, pvd_tree, "value")
+    -- Parse each field definition: name + FieldDesc
+    for i = 1, field_count do
+        if not remaining_buf or remaining_buf:len() == 0 then
+            break
+        end
 
-    return pvd_tree
+        local field_name, name_buf = decodeString(remaining_buf, is_big_endian)
+        if not field_name or not name_buf then
+            break
+        end
+
+        remaining_buf = parseFieldDescOnly(name_buf, is_big_endian, tree, field_name:string())
+    end
+
+    return remaining_buf
 end
 
+-- Parse union FieldDesc only (no values): field count + field definitions
+function parseUnionDescOnly(buf, is_big_endian, tree)
+    if not buf or buf:len() == 0 then
+        return buf
+    end
+
+    local field_count, remaining_buf = decodeSize(buf, is_big_endian)
+    if not field_count or not remaining_buf then
+        return buf
+    end
+
+    -- Parse each field definition: name + FieldDesc
+    for i = 1, field_count do
+        if not remaining_buf or remaining_buf:len() == 0 then
+            break
+        end
+
+        local field_name, name_buf = decodeString(remaining_buf, is_big_endian)
+        if not field_name or not name_buf then
+            break
+        end
+
+        remaining_buf = parseFieldDescOnly(name_buf, is_big_endian, tree, field_name:string())
+    end
+
+    return remaining_buf
+end
 
 ----------------------------
 -- command decoders
@@ -1161,8 +1322,8 @@ end
 ----------------------------------------------
 local function pvaClientDestroyDecoder (message_body, pkt, tree, is_big_endian, cmd)
     local command_name = application_messages[cmd]
-    local sid = getUint(message_body(0,4), is_big_endian)
-    local ioid = getUint(message_body(4,4), is_big_endian)
+    local sid = getUint64(message_body, is_big_endian)
+    local ioid = getUint64(message_body, is_big_endian)
     tree:add(fsid, message_body(0,4), sid)
     tree:add(fioid, message_body(4,4), ioid)
     pkt.cols.info:append(string.format("%s(sid=%u, ioid=%u), ", command_name, sid, ioid))
@@ -1179,8 +1340,8 @@ end
 local function pvaGenericClientOpDecoder (message_body, pkt, tree, is_big_endian, cmd)
     local GENERIC_COMMAND_HEADER = 9
     local cname = application_messages[cmd]
-    local sid = getUint(message_body(0,4), is_big_endian)
-    local ioid = getUint(message_body(4,4), is_big_endian)
+    local sid = getUint64(message_body, is_big_endian)
+    local ioid = getUint64(message_body, is_big_endian)
     local raw_sub_command = message_body(8,1)
     local sub_command = raw_sub_command:uint()
     tree:add(fsid, message_body(0,4), sid)
@@ -1192,7 +1353,7 @@ local function pvaGenericClientOpDecoder (message_body, pkt, tree, is_big_endian
     sub_tree:add(fsubcmd_get,  raw_sub_command, sub_command)
     sub_tree:add(fsubcmd_gtpt, raw_sub_command, sub_command)
     if message_body:len()>GENERIC_COMMAND_HEADER then
-        decodePVData(message_body(GENERIC_COMMAND_HEADER):tvb(), pkt, tree, is_big_endian, "PVData Body")
+        decodePVData(message_body(GENERIC_COMMAND_HEADER):tvb(), pkt, tree, is_big_endian, "PVData Body", ioid)
     end
 
     pkt.cols.info:append(string.format("%s(sid=%u, ioid=%u, sub=%02x), ", cname, sid, ioid, sub_command))
@@ -1210,7 +1371,7 @@ end
 local function pvaGenericServerOpDecoder (message_body, pkt, tree, is_big_endian, cmd)
     local GENERIC_COMMAND_HEADER = 5
     local cname = application_messages[cmd]
-    local ioid = getUint(message_body(0,4), is_big_endian)
+    local ioid = getUint64(message_body, is_big_endian)
     local raw_sub_command = message_body(4,1)
     local sub_command = raw_sub_command:uint()
 
@@ -1234,7 +1395,7 @@ local function pvaGenericServerOpDecoder (message_body, pkt, tree, is_big_endian
 
     -- Process remaining payload - all messages use unified field parsing
     if message_body and message_body:len() > 0 then
-        decodePVData(message_body, pkt, tree, is_big_endian, "PVData Body")
+        decodePVData(message_body, pkt, tree, is_big_endian, "PVData Body", ioid)
     end
 
     pkt.cols.info:append(string.format("%s(ioid=%u, sub=%02x), ", cname, ioid, sub_command))
