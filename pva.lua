@@ -323,16 +323,20 @@ local FieldRegistry = {}
 FieldRegistry.data = {}
 
 -- Add a field to the registry
-function FieldRegistry:addField(op_id, field_id, name, type_code, parent_field_id)
+function FieldRegistry:addField(op_id, field_id, name, type_code, parent_field_id, type)
     -- Ensure op_id exists
     if not self.data[op_id] then
         self.data[op_id] = {}
     end
 
+    -- Determine the type string
+    local type_string = type or PVD_TYPES[type_code] or "<unknown>"
+
     -- Create the field entry
     local field = {
         name = name,
         type_code = type_code,
+        type = type_string,
         sub_field_refs = {}  -- Initialize as empty table
     }
 
@@ -361,12 +365,20 @@ end
 
 -- Check if a field exists
 function FieldRegistry:hasField(op_id, field_id)
-    return self.data[op_id] and self.data[op_id][field_id] ~= nil
+    if self.data == nil then
+        self.data = {}
+    end
+
+    if self.data[op_id] == nil then
+        self.data[op_id] = {}
+    end
+
+    return self.data[op_id][field_id] ~= nil
 end
 
 -- Get a field from the registry
 function FieldRegistry:getField(op_id, field_id)
-    if self.hasField(op_id, field_id) then
+    if self:hasField(op_id, field_id) then
         return self.data[op_id][field_id]
     end
     return nil
@@ -401,12 +413,13 @@ function FieldRegistry:getFields(op_id)
     return self.data[op_id] or {}
 end
 
+
 -- Get a field by depth-first index within an op_id
 function FieldRegistry:getIndexedField(op_id, index)
     -- Get all fields for the op_id
-    local all_fields = self:getFieldsForOpid(op_id)
+    local all_fields = self:getField(op_id)
     if not all_fields or not next(all_fields) then
-        return nil  -- No fields exist for this op_id
+        return nil, nil  -- No fields exist for this op_id
     end
 
     -- Find the root field (the one that's not a sub-field of any other)
@@ -429,35 +442,45 @@ function FieldRegistry:getIndexedField(op_id, index)
     end
 
     if not root_field_id then
-        return nil  -- No root field found
+        return nil, nil  -- No root field found
     end
 
     -- Perform depth-first traversal
     local current_index = {value = 0}  -- Use table to pass by reference
 
-    local function depth_first_traverse(field_id, target_index)
+    local function depth_first_traverse(field_id, target_index, path_parts)
+        local current_field = self:getField(op_id, field_id)
+        if not current_field then
+            return nil, nil
+        end
+
+        -- Add current field name to path
+        local current_path_parts = {}
+        for i = 1, #path_parts do
+            current_path_parts[i] = path_parts[i]
+        end
+        current_path_parts[#current_path_parts + 1] = current_field.name
+
         -- Check if this is the index we're looking for
         if current_index.value == target_index then
-            return self:getField(op_id, field_id)
+            local path = table.concat(current_path_parts, ".")
+            return path, current_field
         end
 
         current_index.value = current_index.value + 1
 
         -- Recursively traverse sub-fields (depth-first)
-        local current_field = self:getField(op_id, field_id)
-        if current_field then
-            for _, sub_field_id in ipairs(current_field.sub_field_refs) do
-                local result = depth_first_traverse(sub_field_id, target_index)
-                if result then
-                    return result
-                end
+        for _, sub_field_id in ipairs(current_field.sub_field_refs) do
+            local path, result = depth_first_traverse(sub_field_id, target_index, current_path_parts)
+            if result then
+                return path, result
             end
         end
 
-        return nil
+        return nil, nil
     end
 
-    return depth_first_traverse(root_field_id, index)
+    return depth_first_traverse(root_field_id, index, {})
 end
 
 ----------------------------------------------
@@ -465,15 +488,77 @@ end
 ----------------------------------------------
 
 ----------------------------------------------
+--- tvbToBinary: get an binary string of digits from buffer
+--- @param tvb_range to read the bytes from
+----------------------------------------------
+function tvbToBinary(tvb_range)
+    if not tvb_range or tvb_range:len() == 0 then
+        return ""
+    end
+
+    local result = {}
+    local bytes = tvb_range:bytes()
+
+    for i = 0, bytes:len() - 1 do
+        local byte = bytes:get_index(i)
+        local binary_byte = ""
+
+        -- Convert each byte to 8-bit binary
+        for bit = 7, 0, -1 do
+            binary_byte = binary_byte .. ((byte >> bit) & 1)
+        end
+
+        result[#result + 1] = binary_byte
+    end
+
+    return table.concat(result)
+end
+
+----------------------------------------------
 --- getUint: get an unsigned integer with the correct byte order
 --- @param src to read the uint from
 --- @param is_big_endian flag to indicate the bigendianness
 ----------------------------------------------
 local function getUint(src, is_big_endian)
+    if src:len() == 1 then
+        return src:byte()
+    end
     if is_big_endian == nil or is_big_endian then
-        return src:uint()
+        if src:len() == 2 then
+            return src:uint()
+        else
+            return src:uint64():tonumber()
+        end
     else
-        return src:le_uint()
+        if src:len() == 2 then
+            return src:le_uint()
+        else
+            return src:le_uint64():tonumber()
+        end
+    end
+end
+
+----------------------------------------------
+--- getInt: get an integer with the correct byte order
+--- @param src to read the int from
+--- @param is_big_endian flag to indicate the bigendianness
+----------------------------------------------
+local function getInt(src, is_big_endian)
+    if src:len() == 1 then
+        return src:byte()
+    end
+    if is_big_endian == nil or is_big_endian then
+        if src:len() == 2 then
+            return src:int()
+        else
+            return src:int64():tonumber()
+        end
+    else
+        if src:len() == 2 then
+            return src:le_int()
+        else
+            return src:le_int64():tonumber()
+        end
     end
 end
 
@@ -512,7 +597,11 @@ local function decodeSize(buf, is_big_endian)
     -- 1. fast path: single‑byte size 0‑254
     local first = buf:range(0,1):uint()      -- one byte
     if first < 0xFF then
-        return first, buf:range(1)           -- drop 1 byte
+        if buf:len() > 1 then
+            return first, buf:range(1)       -- drop 1 byte
+        else
+            return first, nil                -- nothing remains after droping a byte
+        end
     end
 
     -- 2. extended 32‑bit form (5 bytes total)
@@ -540,64 +629,29 @@ end
 -- @param buf: the buffer to decode from
 -- @param is_big_endian: true if the buffer is big endian
 -- @return the string and the remaining buffer
-----------------------------------------------
 local function decodeString(buf, is_big_endian)
     if buf:len() == 0 then
-        return buf(0,0), nil
+        return nil, buf
     end
 
     local len, remaining_buf = decodeSize(buf, is_big_endian)
 
     -- Check if we have enough bytes for the string
-    if not remaining_buf or remaining_buf:len() < len then
-        -- Not enough data, return what we have
-        return buf(0, math.min(len, buf:len())), nil
+    if remaining_buf == nil or remaining_buf:len() < len then
+        -- Not enough data, return what we have as string
+        local partial_range = buf(0, math.min(len, buf:len()))
+        return partial_range:string(), nil
     end
+
+    local string_range = remaining_buf(0, len)
+    local string_value = string_range:string()
 
     if len == remaining_buf:len() then
-        return remaining_buf(0, len), nil
+        return string_value, nil
     else
-        return remaining_buf(0, len), remaining_buf(len):tvb()
+        return string_value, remaining_buf:range(len)
     end
 end
-
--- Parse Type ID string (optional)
-local function getTypeId(message_body, is_big_endian)
-    local display_name = nil
-    if message_body:len() > 0 then
-        -- Check if this looks like a string by examining the first byte
-        local first_byte = message_body(0, 1):uint()
-
-        -- If first byte is 0, there's no type ID string
-        if first_byte == 0 then
-            -- Skip the 0x00 byte and return
-            return nil, message_body(1):tvb(), nil
-        elseif first_byte <= 50 and first_byte > 0 then
-            -- If first byte is 1-50, it might be a string length
-            local type_id, remaining_buf = decodeString(message_body, is_big_endian)
-            if type_id and remaining_buf then
-                -- Even if the string is empty, we should advance the buffer
-                message_body = remaining_buf
-                if type_id:len() > 0 then
-                    local type_id_str = type_id:string()
-                    display_name = type_id_str
-
-                    -- Look for normative type translation
-                    for i = 1, #nt_types, 2 do
-                        if nt_types[i] == type_id_str then
-                            display_name = nt_types[i + 1]
-                            break
-                        end
-                    end
-                end
-            end
-        end
-        -- If first byte is > 50, it's probably a field count, not a string length
-    end
-    return nil, message_body, display_name
-end
-
-
 
 
 ----------------------------------------------
@@ -735,215 +789,356 @@ local function decodeStatus (message_body, tree, is_big_endian)
     end
 end
 
+function transposeNtNames(field_name)
 
--- These old functions are no longer needed - replaced by data-driven parsing
-
--- ===================================================================
--- MONITOR-INIT PARSER (uses unified FieldDesc system)
--- ===================================================================
-
-function decodePVData(pvdata_buf, pkt, tree, is_big_endian, label, ioid)
-    if not pvdata_buf or pvdata_buf:len() == 0 then
-        return
-    end
-
-    local pvdata_type = pvdata_buf(0, 1):uint()
-    local remaining_buf = pvdata_buf:range(1)
-
-    if pvdata_buf:len() ~= 0 and pvdata_type ~= 0xFF then
-        local pvd_tree = tree:add(pvdata_buf, label or "PVData Body")
-        remaining_buf = parsePVDataWithIntrospection(pvdata_buf, is_big_endian, pvd_tree)
-    end
-    if remaining_buf and remaining_buf:len() then tree:add(remaining_buf, "Unrecognised Op Data") end
 end
 
--- Parse PVData that may start with introspection types (0xFD, 0xFE, 0xFF)
-function parsePVDataWithIntrospection(buf, is_big_endian, tree)
-    if not buf or buf:len() == 0 then
-        return buf
+
+function decodeStruct(remaining_buf, is_big_endian, op_id, field_id, parent_field_id, type_code, name)
+    -- get name
+    local type_id
+    type_id, remaining_buf = decodeString(remaining_buf, is_big_endian)
+    type_id = type_id or name
+    type_id = nt_types[type_id] or type_id
+
+    --type_id = name or type_id
+
+    -- create struct field
+    local field = FieldRegistry:addField(op_id, field_id, type_id, type_code, parent_field_id)
+
+    print("Structure: " .. type_id)
+
+    -- get count
+    local count
+    count, remaining_buf = decodeSize(remaining_buf, is_big_endian)
+
+    for i = 1, count do
+        local field_name
+        field_name, remaining_buf = decodeString(remaining_buf, is_big_endian)
+        print("    Sub Field Info: name: " .. field_name)
+        remaining_buf = decodePVField(remaining_buf, nil, is_big_endian, op_id, nil, true, field_name)
+    end
+
+    return field, remaining_buf
+end
+
+function decodeUnion(remaining_buf, is_big_endian, op_id, field_id, parent_field_id, name, type_code, name)
+    -- get name
+    local type_id
+    type_id, remaining_buf = decodeString(remaining_buf, is_big_endian)
+    type_id = type_id or name
+    type_id = nt_types[type_id] or type_id
+
+    -- create struct field
+    local field = FieldRegistry:addField(op_id, field_id, type_id, type_code, parent_field_id)
+
+    -- get count
+    local count
+    count, remaining_buf = decodeSize(remaining_buf, is_big_endian)
+
+    for i = 1, count do
+        local field_name
+        field_name, remaining_buf = decodeString(remaining_buf, is_big_endian)
+        remaining_buf = decodePVField(remaining_buf, nil, is_big_endian, op_id, nil, true, field_name)
+    end
+
+    return field, remaining_buf
+end
+
+-- Parse PVData for a field (recurses children) to extract and store a field definition
+function decodeField(pvdata_buf, is_big_endian, op_id, field_id, parent_field_id, given_name)
+    if not pvdata_buf or pvdata_buf:len() < 2 then
+        return nil, pvdata_buf
+    end
+
+    -- reset fields if this is the top level
+    if not parent_field_id then FieldRegistry:resetFields(op_id) end
+
+    -- Read Type code
+    local type_code = pvdata_buf(0, 1):uint()
+
+    local remaining_buf = pvdata_buf:range(1)
+
+    if type_code == TYPE_CODE_STRUCT or type_code == TYPE_CODE_STRUCT_ARRAY then
+        return decodeStruct(remaining_buf, is_big_endian, op_id, field_id, parent_field_id, type_code, given_name)
+    elseif type_code == TYPE_CODE_UNION or type_code == TYPE_CODE_UNION_ARRAY then
+        return decodeUnion(remaining_buf, is_big_endian, op_id, field_id, parent_field_id, type_code, given_name)
+    elseif type_code == TYPE_CODE_BOOLEAN
+            or type_code == TYPE_CODE_BYTE
+            or type_code == TYPE_CODE_SHORT
+            or type_code == TYPE_CODE_INT
+            or type_code == TYPE_CODE_LONG
+            or type_code == TYPE_CODE_UBYTE
+            or type_code == TYPE_CODE_USHORT
+            or type_code == TYPE_CODE_UINT
+            or type_code == TYPE_CODE_ULONG
+            or type_code == TYPE_CODE_FLOAT
+            or type_code == TYPE_CODE_DOUBLE
+            or type_code == TYPE_CODE_STRING
+            or type_code == TYPE_CODE_BOOLEAN_ARRAY
+            or type_code == TYPE_CODE_BYTE_ARRAY
+            or type_code == TYPE_CODE_SHORT_ARRAY
+            or type_code == TYPE_CODE_INT_ARRAY
+            or type_code == TYPE_CODE_LONG_ARRAY
+            or type_code == TYPE_CODE_UBYTE_ARRAY
+            or type_code == TYPE_CODE_USHORT_ARRAY
+            or type_code == TYPE_CODE_UINT_ARRAY
+            or type_code == TYPE_CODE_ULONG_ARRAY
+            or type_code == TYPE_CODE_FLOAT_ARRAY
+            or type_code == TYPE_CODE_DOUBLE_ARRAY
+            or type_code == TYPE_CODE_STRING_ARRAY
+    then
+        local field = FieldRegistry:addField(op_id, field_id, given_name, type_code, parent_field_id)
+        return field, remaining_buf
+    end
+
+end
+
+-- Display a single field and move the buf pointer along - skip any non-scalar type_code
+function displayField(pvdata_buf, tree, is_big_endian, pvdata_type, field)
+    if field == nil then
+        return nil
+    end
+    --tree:add(pvdata_buf, string.format("%s (0x%02X: %s)", field.name, field.type_id, field.type_name))
+    local remaining_buf = pvdata_buf
+    if field.type_code == TYPE_CODE_STRUCT or
+            field.type_code == TYPE_CODE_UNION or
+            field.type_code == TYPE_CODE_STRUCT_ARRAY or
+            field.type_code == TYPE_CODE_UNION_ARRAY then
+    else
+        -- simple types
+        local data_len
+        if pvdata_type == 0x00 then
+            -- there is actual data to parse out and point to
+            data_len = getTypeSize(field.type_code)
+            if field.type_code == TYPE_CODE_BOOLEAN then
+                tree:add(remaining_buf(0, data_len), string.format("%s (0x%02X: %s): %s", field.name, field.type_id, field.type_name, tostring(remaining_buf(0, 1):uint() == 0)))
+                remaining_buf = remaining_buf:range(data_len)
+            elseif field.type_code == TYPE_CODE_BYTE then
+                tree:add(remaining_buf(0, data_len), string.format("%s (0x%02X: %s): %d", field.name, field.type_id, field.type_name, remaining_buf(0, 1):int()))
+                remaining_buf = remaining_buf:range(data_len)
+            elseif field.type_code == TYPE_CODE_UBYTE then
+                tree:add(remaining_buf(0, data_len), string.format("%s (0x%02X: %s): %d", field.name, field.type_id, field.type_name, remaining_buf(0, 1):uint()))
+                remaining_buf = remaining_buf:range(data_len)
+            elseif field.type_code == TYPE_CODE_SHORT or field.type_code == TYPE_CODE_INT or field.type_code == TYPE_CODE_LONG then
+                tree:add(remaining_buf(0, data_len), string.format("%s (0x%02X: %s): %s", field.name, field.type_id, field.type_name, tostring(getUint(remaining_buf(0, data_len), is_big_endian))))
+                remaining_buf = remaining_buf:range(data_len)
+            elseif field.type_code == TYPE_CODE_USHORT or field.type_code == TYPE_CODE_UINT or field.type_code == TYPE_CODE_ULONG then
+                tree:add(remaining_buf(0, data_len), string.format("%s (0x%02X: %s): %s", field.name, field.type_id, field.type_name, tostring(getInt(remaining_buf(0, data_len), is_big_endian))))
+                remaining_buf = remaining_buf:range(data_len)
+            elseif field.type_code == TYPE_CODE_FLOAT then
+                tree:add(remaining_buf(0, data_len), string.format("%s (0x%02X: %s): %d", field.name, field.type_id, field.type_name, remaining_buf(0, 4):float()))
+                remaining_buf = remaining_buf:range(data_len)
+            elseif field.type_code == TYPE_CODE_DOUBLE then
+                tree:add(remaining_buf(0, data_len), string.format("%s (0x%02X: %s): %d", field.name, field.type_id, field.type_name, remaining_buf(0, 8):double()))
+                remaining_buf = remaining_buf:range(data_len)
+            elseif field.type_code == TYPE_CODE_STRING then
+                tree:add(remaining_buf(0, data_len), string.format("%s (0x%02X: %s): %d", field.name, field.type_id, field.type_name, remaining_buf(0, 1):string()))
+                remaining_buf = remaining_buf:range(data_len)
+            elseif field.type_code == TYPE_CODE_STRUCT then
+                local sub_tree = tree:add(remaining_buf(0, 1), string.format("%s (0x%02X: %s)", field.name, field.type_id, field.type_name))
+                local sub_fields = FieldRegistry:getSubFields(field.op_id, field.field_id)
+                for _, sub_field in ipairs(sub_fields) do
+                    remaining_buf = displayField(remaining_buf, sub_tree, is_big_endian, pvdata_type, sub_field)
+                end
+            elseif field.type_code == TYPE_CODE_UNION then
+                local sub_tree = tree:add(remaining_buf(0, 1), string.format("%s (0x%02X: %s)", field.name, field.type_id, field.type_name))
+                local sub_fields = FieldRegistry:getSubFields(field.op_id, field.field_id)
+                for _, sub_field in ipairs(sub_fields) do
+                    remaining_buf = displayField(remaining_buf, sub_tree, is_big_endian, pvdata_type, sub_field)
+                end
+            elseif field.type_code == TYPE_CODE_STRUCT_ARRAY then
+                local count = getUint32(remaining_buf, is_big_endian)
+                remaining_buf = remaining_buf:range(4)
+                local array_tree = tree:add(remaining_buf(0, 1), string.format("%s[] (0x%02X: %s[])", field.name, field.type_id, field.type_name))
+                for i = 1, count do
+                    local sub_tree = array_tree:add(remaining_buf(0, 1), string.format("%s[%d] (0x%02X: %s)", field.name, i - 1, field.type_id, field.type_name))
+                    local sub_fields = FieldRegistry:getSubFields(field.op_id, field.field_id)
+                    for _, sub_field in ipairs(sub_fields) do
+                        remaining_buf = displayField(remaining_buf, sub_tree, is_big_endian, pvdata_type, sub_field)
+                    end
+                end
+            elseif field.type_code == TYPE_CODE_UNION_ARRAY then
+                tree:add(remaining_buf(0, data_len), string.format("%s (0x%02X: %s): %d", field.name, field.type_id, field.type_name, remaining_buf(0, 1):string()))
+                remaining_buf = remaining_buf:range(data_len)
+            elseif field.type_code >= TYPE_CODE_BOOLEAN_ARRAY then
+                local count = getUint32(remaining_buf, is_big_endian)
+                remaining_buf = remaining_buf:range(4)
+                local array_tree = tree:add(remaining_buf(0, data_len * count), string.format("%s[] (0x%02X: %s[])", field.name, field.type_id, field.type_name))
+                for i = 1, count do
+                    if field.type_code == TYPE_CODE_BOOLEAN_ARRAY then
+                        array_tree:add(remaining_buf(0, data_len), string.format("%s[%d] (0x%02X: %s): %s", field.name, i - 1, field.type_id, field.type_name, tostring(remaining_buf(0, 1):uint() == 0)))
+                    elseif field.type_code == TYPE_CODE_BYTE_ARRAY then
+                        array_tree:add(remaining_buf(0, data_len), string.format("%s[%d] (0x%02X: %s): %d", field.name, i - 1, field.type_id, field.type_name, remaining_buf(0, 1):int()))
+                    elseif field.type_code == TYPE_CODE_UBYTE_ARRAY then
+                        array_tree:add(remaining_buf(0, data_len), string.format("%s[%d] (0x%02X: %s): %d", field.name, i - 1, field.type_id, field.type_name, remaining_buf(0, 1):uint()))
+                    elseif field.type_code == TYPE_CODE_SHORT_ARRAY or field.type_code == TYPE_CODE_INT_ARRAY or field.type_code == TYPE_CODE_LONG_ARRAY then
+                        array_tree:add(remaining_buf(0, data_len), string.format("%s[%d] (0x%02X: %s): %s", field.name, i - 1, field.type_id, field.type_name, tostring(getUint(remaining_buf(0, data_len), is_big_endian))))
+                    elseif field.type_code == TYPE_CODE_USHORT or field.type_code == TYPE_CODE_UINT_ARRAY or field.type_code == TYPE_CODE_ULONG_ARRAY then
+                        array_tree:add(remaining_buf(0, data_len), string.format("%s[%d] (0x%02X: %s): %s", field.name, i - 1, field.type_id, field.type_name, tostring(getInt(remaining_buf(0, data_len), is_big_endian))))
+                    elseif field.type_code == TYPE_CODE_FLOAT_ARRAY then
+                        array_tree:add(remaining_buf(0, data_len), string.format("%s[%d] (0x%02X: %s): %d", field.name, i - 1, field.type_id, field.type_name, remaining_buf(0, 4):float()))
+                    elseif field.type_code == TYPE_CODE_DOUBLE_ARRAY then
+                        array_tree:add(remaining_buf(0, data_len), string.format("%s[%d] (0x%02X: %s): %d", field.name, i - 1, field.type_id, field.type_name, remaining_buf(0, 8):double()))
+                    elseif field.type_code == TYPE_CODE_STRING_ARRAY then
+                        array_tree:add(remaining_buf(0, data_len), string.format("%s[%d] (0x%02X: %s): %d", field.name, i - 1, field.type_id, field.type_name, remaining_buf(0, 1):string()))
+                    end
+                    remaining_buf = remaining_buf:range(data_len)
+                end
+            end
+        else
+            -- just point to whole buffer
+            data_len = pvdata_buf:len()
+            if field.type_code < TYPE_CODE_BOOLEAN_ARRAY then
+                tree:add(pvdata_buf(0, data_len), string.format("%s (0x%02X: %s)", field.name, field.type_id, field.type_name))
+            else
+                tree:add(pvdata_buf(0, data_len), string.format("%s[] (0x%02X: %s[])", field.name, field.type_id, field.type_name))
+            end
+
+            -- don't move buffer pointer
+        end
+    end
+
+    return remaining_buf
+end
+
+-- Parse PVData, updating tree with structure and optional data, returning remaining buffer
+function decodePVField(pvdata_buf, tree, is_big_endian, op_id, bitset_str, dont_display, name)
+    if not pvdata_buf or pvdata_buf:len() == 0 then
+        return pvdata_buf
+    end
+
+    if bitset_str then
+        -- Data only
+        if pvdata_buf:len() < 1 then
+            return pvdata_buf
+        end
+
+        local remaining_buf = pvdata_buf
+
+        -- Lookup cached field definition
+        -- Process each bit position (rightmost bit is index 0)
+        for i = 1, #bitset_str do
+            local bit_index = #bitset_str - i  -- Convert to 0-based index from right
+            local bit_char = bitset_str:sub(i, i)
+
+            if bit_char == "1" then
+                local path, field = FieldRegistry:getIndexedField(op_id, bit_index)
+                if field then
+                    if field.type_code == TYPE_CODE_STRUCT then
+                    elseif field.type_code == TYPE_CODE_STRUCT_ARRAY then
+                    elseif field.type_code == TYPE_CODE_STRUCT_ARRAY then
+                    elseif field.type_code == TYPE_CODE_STRUCT_ARRAY then
+                    else
+                        if dont_display == nil or dont_display ~= true then
+                            remaining_buf = displayField(remaining_buf, tree, is_big_endian, pvdata_type, field)
+                        end
+                    end
+                end
+            end
+        end
+
+        -- display the field and get data from buffer
+        if dont_display == nil or dont_display ~= true then
+            remaining_buf = displayField(pvdata_buf, tree, is_big_endian, pvdata_type, field, name)
+        end
+
+        return remaining_buf
     end
 
     -- Check first byte to determine introspection type
-    local first_byte = buf(0, 1):uint()
+    local pvdata_type = pvdata_buf(0, 1):uint()
+    if not pvdata_buf or pvdata_buf:len() < 2 then
+        local field
+        field, remaining_buf = decodeField(pvdata_buf, is_big_endian, op_id, field_id, name)
 
-    if first_byte == FIELD_DESC_TYPE_FULL then
-        -- 0xFD: FULL_WITH_ID - full introspection + 16-bit type ID + FieldDesc
-        if buf:len() < 3 then
-            tree:add_expert_info(PI_MALFORMED, PI_ERROR, "Truncated FULL_WITH_ID introspection")
-            return buf
+        -- display the parsed field
+        if dont_display == nil or dont_display ~= true then
+            displayField(pvdata_buf, tree, is_big_endian, pvdata_type, field, name)
         end
 
-        local type_id = getUint(buf(1, 2), is_big_endian)
-        tree:add(buf(0, 3), string.format("Introspection: FULL_WITH_ID (Type ID: %d)", type_id))
+        return remaining_buf
+        --return nil
+    end
+    local remaining_buf = pvdata_buf:range(1)
+    pvdata_buf = remaining_buf
 
-        -- Parse the FieldDesc that follows - advance buffer by 3 bytes
-        local field_buf = buf(3):tvb()
-        print(string.format("FULL_WITH_ID: type_id=%d, field_buf_len=%d, first_byte=0x%02X",
-              type_id, field_buf:len(), field_buf:len() > 0 and field_buf(0,1):uint() or 0))
-        parsePVStructure(field_buf, is_big_endian, tree, "value")
+    if pvdata_type == FIELD_DESC_TYPE_FULL then
+        -- 0xFD: introspection + 16-bit type ID + FieldDesc
+        if remaining_buf:len() < 2 then
+            if dont_display == nil or dont_display ~= true then
+                tree:add_expert_info(PI_MALFORMED, PI_ERROR, "Truncated field descriptor")
+            end
+            return remaining_buf
+        end
 
-    elseif first_byte == FIELD_DESC_TYPE_ID_ONLY then
+        local field_id = getUint32(remaining_buf, is_big_endian)
+        remaining_buf = remaining_buf:range(2)
+
+        -- Parse the FieldDesc that follows
+        local field, remaining_buf = decodeField(remaining_buf, is_big_endian, op_id, field_id, name)
+
+        -- display the parsed field
+        if dont_display == nil or dont_display ~= true then
+            displayField(pvdata_buf, tree, is_big_endian, pvdata_type, field, name)
+        end
+
+        return remaining_buf
+
+    elseif pvdata_type == FIELD_DESC_TYPE_ID_ONLY then
         -- 0xFE: ONLY_ID - reference to cached type + PVData values
-        if buf:len() < 3 then
-            tree:add_expert_info(PI_MALFORMED, PI_ERROR, "Truncated ONLY_ID introspection")
-            return buf
+
+        local new_remaining_buf
+        local changed_bit_set
+        changed_bit_set, new_remaining_buf = decodeSize(remaining_buf, is_big_endian)
+        if dont_display == nil or dont_display ~= true then
+            tree:add(remaining_buf(0, remaining_buf:len() - new_remaining_buf:len()), string.format("Change BitSet: %d", changed_bit_set))
+        end
+        remaining_buf = new_remaining_buf
+
+        if remaining_buf:len() < 2 then
+            if dont_display == nil or dont_display ~= true then
+                tree:add_expert_info(PI_MALFORMED, PI_ERROR, "Truncated field descriptor")
+            end
+            return remaining_buf
         end
 
-        local type_id = getUint(buf(1, 2), is_big_endian)
-        tree:add(buf(0, 3), string.format("Introspection: ONLY_ID (Type ID: %d)", type_id))
+        local field_id = getUint32(remaining_buf, is_big_endian)
+        remaining_buf = remaining_buf:range(2)
 
-        -- TODO: Look up cached type and parse values accordingly
-        local values_buf = buf(3):tvb()
-        tree:add(values_buf, "PVData Values (cached type lookup not implemented)")
+        -- Lookup cached field definition
+        local field = FieldRegistry:getField(op_id, field_id)
 
-    elseif first_byte == FIELD_DESC_NULL then
+        -- display the field and get data from buffer
+        if dont_display == nil or dont_display ~= true then
+            remaining_buf = displayField(pvdata_buf, tree, is_big_endian, pvdata_type, field, name)
+        end
+
+        return remaining_buf
+
+    elseif pvdata_type == FIELD_DESC_NULL then
         -- 0xFF: NULL_TYPE - null field
-        tree:add(buf(0, 1), "Introspection: NULL_TYPE")
-        return buf(1):tvb()
+        return remaining_buf
 
     else
-        -- Not an introspection type - parse as direct FieldDesc + values
-        parsePVStructure(buf, is_big_endian, tree, "value")
+        if dont_display == nil or dont_display ~= true then
+            tree:add_expert_info(PI_MALFORMED, PI_ERROR, "Unrecognised Introspection Type")
+        end
+        return remaining_buf
     end
 
     return nil -- Consumed all data
 end
 
--- Parse a PVStructure: FieldDesc followed by values
-function parsePVStructure(buf, is_big_endian, tree, field_name)
-    if not buf or buf:len() == 0 then
-        return buf
+-- Parse PVData returning remaining buffer
+function pvaDecodePVData(pvdata_buf, tree, is_big_endian, op_id, bitset)
+    local bitset_str
+    if bitset then
+        bitset_str = tvbToBinary(bitset)
+        tree:add(bitset, string.format("Changed BitSet (%d bytes): %s", bitset:len(), bitset_str))
     end
-
-    -- For INIT messages, we only have the FieldDesc (structure definition) without values
-    -- Parse the complete FieldDesc structure - do NOT go through introspection detection
-    -- as this is only for top-level PVData, not nested FieldDesc structures
-    local remaining_buf = parseFieldDescOnly(buf, is_big_endian, tree, field_name)
-
-    -- In INIT messages, there are typically no values after the FieldDesc
-    -- Any remaining data would be additional fields or padding
-    if remaining_buf and remaining_buf:len() > 0 then
-        tree:add(remaining_buf, string.format("Remaining data (%d bytes)", remaining_buf:len()))
-    end
-
-    return nil
-end
-
--- Parse only the FieldDesc part (structure definition) without values
-function parseFieldDescOnly(buf, is_big_endian, tree, field_name)
-    if not buf or buf:len() < 1 then
-        return buf
-    end
-
-    -- Read Type code
-    local type_code = buf(0, 1):uint()
-    local remaining_buf = buf(1):tvb()
-    local type_name = PVD_TYPES[type_code] or string.format("unknown(0x%02X)", type_code)
-
-    local field_tree
-
-    if type_code == TYPE_CODE_STRUCT or type_code == 0xFD then
-        -- Parse struct: optional Type ID + field count + field definitions
-        -- Note: 0xFD in FieldDesc context appears to be an extended struct type
-        local type_id, updated_buf, translated_name = getTypeId(remaining_buf, is_big_endian)
-        remaining_buf = updated_buf
-
-        local clean_name = translated_name or "struct"
-        if type_id and type_id:len() > 0 and not translated_name then
-            local type_id_str = type_id:string()
-            clean_name = type_id_str:match("nt/([^:]+)") or type_id_str:match("([^:]+)") or type_id_str
-        end
-
-        local display_name = field_name and string.format("%s (0x%02X: %s)", field_name, type_code, clean_name)
-                or string.format("(0x%02X: %s)", type_code, clean_name)
-        field_tree = tree:add(type_code, display_name)
-
-        -- Parse struct fields
-        remaining_buf = parseStructDescOnly(remaining_buf, is_big_endian, field_tree)
-
-    elseif type_code == TYPE_CODE_UNION then
-        -- Parse union: optional Type ID + field count + field definitions
-        local type_id, updated_buf, translated_name = getTypeId(remaining_buf, is_big_endian)
-        remaining_buf = updated_buf
-
-        local clean_name = translated_name or type_name
-        if type_id and type_id:len() > 0 and not translated_name then
-            local type_id_str = type_id:string()
-            clean_name = type_id_str:match("nt/([^:]+)") or type_id_str:match("([^:]+)") or type_id_str
-        end
-
-        local display_name = field_name and string.format("%s (0x%02X: %s)", field_name, type_code, clean_name)
-                or string.format("(0x%02X: %s)", type_code, clean_name)
-        field_tree = tree:add(type_code, display_name)
-
-        -- Parse union fields
-        remaining_buf = parseUnionDescOnly(remaining_buf, is_big_endian, field_tree)
-
-    else
-        -- Scalar types and arrays - just TypeCode, no additional structure
-        -- NOTE: In FieldDesc context, 0xFD/0xFE/0xFF are treated as regular type codes, not introspection
-        local display_name = field_name and string.format("%s (0x%02X: %s)", field_name, type_code, type_name)
-                or string.format("(0x%02X: %s)", type_code, type_name)
-        field_tree = tree:add(type_code, display_name)
-    end
-
-    return remaining_buf
-end
-
--- Parse structure FieldDesc only (no values): field count + field definitions
-function parseStructDescOnly(buf, is_big_endian, tree)
-    if not buf or buf:len() == 0 then
-        return buf
-    end
-
-    local field_count, remaining_buf = decodeSize(buf, is_big_endian)
-    if not field_count or not remaining_buf then
-        return buf
-    end
-
-    -- Parse each field definition: name + FieldDesc
-    for i = 1, field_count do
-        if not remaining_buf or remaining_buf:len() == 0 then
-            break
-        end
-
-        local field_name, name_buf = decodeString(remaining_buf, is_big_endian)
-        if not field_name or not name_buf then
-            break
-        end
-
-        remaining_buf = parseFieldDescOnly(name_buf, is_big_endian, tree, field_name:string())
-    end
-
-    return remaining_buf
-end
-
--- Parse union FieldDesc only (no values): field count + field definitions
-function parseUnionDescOnly(buf, is_big_endian, tree)
-    if not buf or buf:len() == 0 then
-        return buf
-    end
-
-    local field_count, remaining_buf = decodeSize(buf, is_big_endian)
-    if not field_count or not remaining_buf then
-        return buf
-    end
-
-    -- Parse each field definition: name + FieldDesc
-    for i = 1, field_count do
-        if not remaining_buf or remaining_buf:len() == 0 then
-            break
-        end
-
-        local field_name, name_buf = decodeString(remaining_buf, is_big_endian)
-        if not field_name or not name_buf then
-            break
-        end
-
-        remaining_buf = parseFieldDescOnly(name_buf, is_big_endian, tree, field_name:string())
-    end
-
-    return remaining_buf
+    local remaining_buf = decodePVField(pvdata_buf, tree, is_big_endian, op_id, bitset_str)
+    if remaining_buf and remaining_buf:len() > 0 then tree:add(remaining_buf, "Unrecognised Op Data") end
 end
 
 ----------------------------
@@ -998,7 +1193,7 @@ local function pvaClientSearchDecoder (message_body, pkt, tree, is_big_endian)
             name, message_body = decodeString(message_body(4), is_big_endian)
             tree:add(fsearch_name, name)
 
-            pkt.cols.info:append(', '..cid..":'"..name:string().."'")
+            pkt.cols.info:append(', '..cid..":'"..name.."'")
         end
     end
     pkt.cols.info:append("), ")
@@ -1265,11 +1460,11 @@ end
 ----------------------------------------------
 local function pvaClientCreateChannelDecoder (message_body, pkt, tree, is_big_endian)
     pkt.cols.info:append("CREATE_CHANNEL(")
-    local n_pvs = getUint(message_body(0,2), is_big_endian)
+    local n_pvs = getUint32(message_body, is_big_endian)
     message_body = message_body(2)
 
     for i=0, n_pvs -1 do
-        local cid = getUint(message_body(0,4), is_big_endian)
+        local cid = getUint64(message_body, is_big_endian)
         tree:add(fsearch_cid, message_body(0,4), cid)
         local name
         name, message_body = decodeString(message_body(4), is_big_endian)
@@ -1288,8 +1483,8 @@ end
 -- @param is_big_endian is the byte stream big endian
 ----------------------------------------------
 local function pvaServerCreateChannelDecoder (message_body, pkt, tree, is_big_endian)
-    local cid = getUint(message_body(0,4), is_big_endian)
-    local sid = getUint(message_body(4,4), is_big_endian)
+    local cid = getUint64(message_body, is_big_endian)
+    local sid = getUint64(message_body(4), is_big_endian)
     pkt.cols.info:append("CREATE_CHANNEL(cid="..cid..", sid="..sid.."), ")
     tree:add(fcid, message_body(0,4), cid)
     tree:add(fsid, message_body(4,4), sid)
@@ -1305,8 +1500,8 @@ end
 -- @param cmd the command number
 ----------------------------------------------
 local function pvaDestroyChannelDecoder (message_body, pkt, tree, is_big_endian, cmd)
-    local cid = getUint(message_body(0,4), is_big_endian)
-    local sid = getUint(message_body(4,4), is_big_endian)
+    local cid = getUint64(message_body, is_big_endian)
+    local sid = getUint64(message_body(4), is_big_endian)
     pkt.cols.info:append("DESTROY_CHANNEL(cid="..cid..", sid="..sid.."), ")
     tree:add(fsid, message_body(0,4), sid)
     tree:add(fcid, message_body(4,4), cid)
@@ -1339,24 +1534,44 @@ end
 ----------------------------------------------
 local function pvaGenericClientOpDecoder (message_body, pkt, tree, is_big_endian, cmd)
     local GENERIC_COMMAND_HEADER = 9
-    local cname = application_messages[cmd]
-    local sid = getUint64(message_body, is_big_endian)
-    local ioid = getUint64(message_body, is_big_endian)
-    local raw_sub_command = message_body(8,1)
-    local sub_command = raw_sub_command:uint()
-    tree:add(fsid, message_body(0,4), sid)
-    tree:add(fioid, message_body(4,4), ioid)
-    local sub_tree = tree:add(fsubcmd, message_body(8,1), sub_command)
-    sub_tree:add(fsubcmd_proc, raw_sub_command, sub_command)
-    sub_tree:add(fsubcmd_init, raw_sub_command, sub_command)
-    sub_tree:add(fsubcmd_dstr, raw_sub_command, sub_command)
-    sub_tree:add(fsubcmd_get,  raw_sub_command, sub_command)
-    sub_tree:add(fsubcmd_gtpt, raw_sub_command, sub_command)
-    if message_body:len()>GENERIC_COMMAND_HEADER then
-        decodePVData(message_body(GENERIC_COMMAND_HEADER):tvb(), pkt, tree, is_big_endian, "PVData Body", ioid)
-    end
+    if message_body:len() >= GENERIC_COMMAND_HEADER then
+        local cname = application_messages[cmd]
+        local sid = getUint64(message_body, is_big_endian)
+        local ioid = getUint64(message_body, is_big_endian)
+        local raw_sub_command = message_body(8, 1)
+        local sub_command = raw_sub_command:uint()
+        tree:add(fsid, message_body(0, 4), sid)
+        tree:add(fioid, message_body(4, 4), ioid)
+        local sub_tree = tree:add(fsubcmd, message_body(8, 1), sub_command)
+        sub_tree:add(fsubcmd_proc, raw_sub_command, sub_command)
+        sub_tree:add(fsubcmd_init, raw_sub_command, sub_command)
+        sub_tree:add(fsubcmd_dstr, raw_sub_command, sub_command)
+        sub_tree:add(fsubcmd_get, raw_sub_command, sub_command)
+        sub_tree:add(fsubcmd_gtpt, raw_sub_command, sub_command)
 
-    pkt.cols.info:append(string.format("%s(sid=%u, ioid=%u, sub=%02x), ", cname, sid, ioid, sub_command))
+        if ( message_body:len() > GENERIC_COMMAND_HEADER ) then
+            message_body = message_body:range(GENERIC_COMMAND_HEADER)
+
+            -- if the subcommand is 0x00 (DATA) then we need to get the change BitSet
+            if sub_command == 0x00 then
+                -- take the next byte as a count followed by that many bytes of the bitset
+                local bitset_count
+                bitset_count, message_body = decodeSize(message_body, is_big_endian)
+                local bitset = message_body:range(0, bitset_count)
+
+                -- Process remaining payload
+                if message_body and message_body:len() > 0 then
+                    pvaDecodePVData(message_body, tree, is_big_endian, ioid, bitset)
+                end
+            else
+                if message_body:len() > 0 then
+                    pvaDecodePVData(message_body, tree, is_big_endian, ioid)
+                end
+            end
+        end
+
+        pkt.cols.info:append(string.format("%s(sid=%u, ioid=%u, sub=%02x), ", cname, sid, ioid, sub_command))
+    end
 end
 
 
@@ -1384,21 +1599,36 @@ local function pvaGenericServerOpDecoder (message_body, pkt, tree, is_big_endian
     sub_tree:add(fsubcmd_get, raw_sub_command, sub_command)
     sub_tree:add(fsubcmd_gtpt, raw_sub_command, sub_command)
 
-    -- Skip the header
-    message_body = message_body(GENERIC_COMMAND_HEADER):tvb()
+    if ( message_body:len() > GENERIC_COMMAND_HEADER ) then
+        -- Skip the header
+        message_body = message_body(GENERIC_COMMAND_HEADER):tvb()
 
-    -- Status handling: All messages except MONITOR UPDATE have status
-    local is_monitor_update = cmd == MONITOR_MESSAGE and bit.band(sub_command, 0x08) == 0
-    if not is_monitor_update then
-        message_body = decodeStatus(message_body, tree, is_big_endian)
+        -- if the subcommand is 0x00 (DATA) then we need to get the change BitSet
+        if sub_command == 0x00 then
+            -- take the next byte as a count followed by that many bytes of the bitset
+            local bitset_count
+            bitset_count, message_body = decodeSize(message_body, is_big_endian)
+            local bitset = message_body:range(0,bitset_count)
+
+            -- Process remaining payload
+            if message_body and message_body:len() > 0 then
+                pvaDecodePVData(message_body, tree, is_big_endian, ioid, bitset)
+            end
+        else
+            -- Status handling: All messages except MONITOR UPDATE have status
+            local is_monitor_update = cmd == MONITOR_MESSAGE and bit.band(sub_command, 0x08) == 0
+            if not is_monitor_update then
+                message_body = decodeStatus(message_body, tree, is_big_endian)
+            end
+
+            -- Process remaining payload
+            if message_body and message_body:len() > 0 then
+                pvaDecodePVData(message_body, tree, is_big_endian, ioid)
+            end
+        end
     end
 
-    -- Process remaining payload - all messages use unified field parsing
-    if message_body and message_body:len() > 0 then
-        decodePVData(message_body, pkt, tree, is_big_endian, "PVData Body", ioid)
-    end
-
-    pkt.cols.info:append(string.format("%s(ioid=%u, sub=%02x), ", cname, ioid, sub_command))
+    pkt.cols.info:append(string.format("cmd=%02x %s(ioid=%u, sub=%02x)", cmd , cname, ioid, sub_command))
 end
 
 local server_cmd_handler = {
@@ -1437,7 +1667,7 @@ local client_cmd_handler = {
 -- @param root: the root tree node to decode into
 -- @return the number of bytes consumed
 ----------------------------------------------
-local function decode (buf, pkt, root)
+local function decode(buf, pkt, root)
     -- minimum of 8 byte header
     if buf:len() < PVA_HEADER_LEN then
         return 0

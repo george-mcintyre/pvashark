@@ -935,8 +935,8 @@ CA 02 40 0D   26 00 00 00        # payload is now 0x26 bytes
 00                              # subcommand  0x00  = DATA
 01 05                           # changedBitSet
                                 #   Size=1 byte, mask=0b00000101
-                                #                            ^bit0 (value)
-                                #                              ^bit2 (timeStamp)
+                                #                              ^bit0 (value)
+                                #                            ^bit2 (timeStamp)
 40 9C C6 F7 6E 58 2D 40         # value = 12.345 (IEEE754 little‑endian)
 00 00 00 00 00 60 EE 5E         # secondsPastEpoch = 1 599 999 000
 00 40 27 09                     # nanoseconds      = 150 000 000
