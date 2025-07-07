@@ -151,8 +151,21 @@ local CACHE_STORE_CODE                  = 0xFD;
 local CACHE_FETCH_CODE                  = 0xFE;
 local TYPE_CODE_NULL                    = 0xFF;
 
--- Legacy codes (not in PVXS specification)
-local TYPE_CODE_INTROSPECTION_ONLY      = 0x01;
+----------------------------------------------
+-- Introspection (Field) encoding types
+----------------------------------------------
+
+local FIELD_DESC_TYPE_FULL = 0xFD;      -- FULL_WITH_ID: full introspection + assign ID
+local FIELD_DESC_TYPE_ID_ONLY = 0xFE;   -- ONLY_ID: reference existing ID
+local FIELD_DESC_NULL = 0xFF;           -- NULL_TYPE: null field
+
+----------------------------------------------
+-- Field content types (after FULL_WITH_ID)
+----------------------------------------------
+
+local FIELD_DESC_DETAIL_INTROSPECTION = 0x01;  -- Only structure definition, no values
+local FIELD_DESC_DETAIL_VALUES        = 0x02;  -- Only values (with bitset), no introspection (placeholder)
+local FIELD_DESC_DETAIL_ALL           = 0x03;  -- Both introspection and values (with bitset) (placeholder)
 
 ----------------------------------------------
 -- TypeCode to name mapping table
@@ -198,7 +211,14 @@ local PVD_TYPES = {
     [CACHE_FETCH_CODE]                  = "cache_fetch",
     [TYPE_CODE_NULL]                    = "null",
 
-    [TYPE_CODE_INTROSPECTION_ONLY]      = "introspectionOnly"
+    -- Introspection (Field) encoding types
+    [FIELD_DESC_TYPE_FULL]        = "introspection_full_id",
+    [FIELD_DESC_TYPE_ID_ONLY]        = "introspection_only_id",
+    [FIELD_DESC_NULL]           = "introspection_null",
+
+    [FIELD_DESC_DETAIL_INTROSPECTION]      = "introspectionOnly",
+    [FIELD_DESC_DETAIL_VALUES]            = "introspectionOnly",
+    [FIELD_DESC_DETAIL_ALL]               = "introspectionOnly"
 }
 
 ----------------------------------------------
@@ -341,59 +361,82 @@ local function getUint(src, is_big_endian)
 end
 
 ----------------------------------------------
--- decodeSize: decode a size from a buffer
--- size is encoded as a single byte, or 4 bytes if the first byte is 0xFE or 0xFF
--- @param buf: the buffer to decode from
--- @param is_big_endian: true if the buffer is big endian
--- @param , is_nullable: true if the buffer is nullable (default true)
--- @return the size and the remaining buffer
+--- getInt: get a signed integer with the correct byte order
+--- @param src to read the int from
+--- @param is_big_endian flag to indicate the bigendianness
 ----------------------------------------------
-local function decodeSize(buf, is_big_endian, is_nullable)
-    if is_nullable == nil then
-        is_nullable = true
-    end
-    local buf_len = buf:len()
-    if buf_len < 1 then
-        return 0, buf
-    end
-
-    local remaining_buf = buf_len > 1 and buf(1) or buf
-    local short_size = buf(0,1):uint()
-    if short_size==0xFF and is_nullable then
-        -- null
-        return 0, remaining_buf
-    elseif short_size==0xFE and not is_nullable then
-        -- 2 byte size
-        if buf_len < 3 then
-            return 0, buf
-        end
-        return getUint(buf(1,2), is_big_endian), buf(3)
-    elseif short_size<0xFE then
-        -- one byte size
-        return short_size, remaining_buf
+local function getInt(src, is_big_endian)
+    if is_big_endian == nil or is_big_endian then
+        return src:int()
     else
-        -- 4 byte size
-        if buf_len < 5 then
-            return 0, buf
-        end
-        return getUint(buf(1,4), is_big_endian), buf(5)
+        return src:le_int()
     end
 end
 
 ----------------------------------------------
+--- getInt64: get a signed 64-bit integer with the correct byte order
+--- @param src to read the int64 from
+--- @param is_big_endian flag to indicate the bigendianness
+----------------------------------------------
+local function getInt64(src, is_big_endian)
+    if is_big_endian == nil or is_big_endian then
+        return src:int64()
+    else
+        return src:le_int64()
+    end
+end
+
+----------------------------------------------
+-- decodeSize: decode a size from a TvbRange buffer using 3-tier encoding
+--
+-- Tier 1: 1 byte (0x00-0xFE) → value 0-254
+-- Tier 2: 5 bytes (0xFF + 4-byte signed int32) → value 255-2^31-2
+-- Tier 3: 13 bytes (0xFF + 0x7FFFFFFF + 8-byte signed int64) → value 2^31-1 to 2^63-1
+--
+-- @param buf           : TvbRange whose first byte is the Size
+-- @param is_big_endian : boolean – true if the current TCP stream is BE
+-- @returns             : size (number or Int64), remaining TvbRange
+----------------------------------------------------------------
+local function decodeSize(buf, is_big_endian)
+
+    -- 1. fast path: single‑byte size 0‑254
+    local first = buf:range(0,1):uint()      -- one byte
+    if first < 0xFF then
+        return first, buf:range(1)           -- drop 1 byte
+    end
+
+    -- 2. extended 32‑bit form (5 bytes total)
+    local v32 = (is_big_endian and
+            buf:range(1,4):int()  or    -- signed BE int32
+            buf:range(1,4):le_int())    -- signed LE int32
+
+    if v32 ~= 0x7FFFFFFF then                -- ordinary 32‑bit size
+        assert(v32 >= 0, "negative size")
+        return v32, buf:range(5)             -- drop 5 bytes
+    end
+
+    -- 3. extended 64‑bit form (13 bytes total)
+    local v64 = (is_big_endian and
+            buf:range(5,8):int64()  or  -- signed BE int64 (Int64 obj)
+            buf:range(5,8):le_int64())  -- signed LE int64
+    assert(v64:tonumber() >= 0, "negative size")
+
+    return v64, buf:range(13)                -- drop 13 bytes
+end
+
+----------------------------------------------
 -- decodeString: extract a string and return that string, and the remaining buffer
--- string is encoded as a size (1 or 4 bytes) followed by the actual string
+-- string is encoded as a size followed by the actual string
 -- @param buf: the buffer to decode from
 -- @param is_big_endian: true if the buffer is big endian
--- @param , is_nullable: true if the buffer is nullable
 -- @return the string and the remaining buffer
 ----------------------------------------------
-local function decodeString(buf, is_big_endian, is_nullable)
+local function decodeString(buf, is_big_endian)
     if buf:len() == 0 then
         return buf(0,0), nil
     end
 
-    local len, remaining_buf = decodeSize(buf, is_big_endian, is_nullable)
+    local len, remaining_buf = decodeSize(buf, is_big_endian)
 
     -- Check if we have enough bytes for the string
     if not remaining_buf or remaining_buf:len() < len then
@@ -412,7 +455,7 @@ end
 local function getTypeId(message_body, is_big_endian)
     local display_name = nil
     if message_body:len() > 0 then
-        local type_id, remaining_buf = decodeString(message_body, is_big_endian, false)
+        local type_id, remaining_buf = decodeString(message_body, is_big_endian)
         if type_id and type_id:len() > 0 then
             local type_id_str = type_id:string()
             display_name = type_id_str
@@ -432,6 +475,8 @@ local function getTypeId(message_body, is_big_endian)
 end
 
 
+
+
 ----------------------------------------------
 -- skipNextElement: skip the next element and return the remaining buffer
 -- @param buf: the buffer to decode from
@@ -439,7 +484,7 @@ end
 -- @return the remaining buffer
 ----------------------------------------------
 local function skipNextElement(buf, is_big_endian)
-    local len, remaining_buf = decodeSize(buf, is_big_endian, is_nullable)
+    local len, remaining_buf = decodeSize(buf, is_big_endian)
     if len == remaining_buf:len() then
         return nil
     else
@@ -450,16 +495,6 @@ end
 ----------------------------
 -- PVData decoders
 ----------------------------
-
--- Helper function to read PVData string (Phase 2)
-local function readPVString(buf, offset, is_big_endian)
-    local str_len, new_offset = readPVSize(buf, offset, is_big_endian)
-    if str_len == 0 or new_offset + str_len > buf:len() then
-        return "", new_offset
-    end
-    local str = buf(new_offset, str_len):string()
-    return str, new_offset + str_len
-end
 
 -- EPICS timestamp conversion to human readable format
 local function formatEpicsTimestamp(seconds, nanoseconds)
@@ -582,11 +617,11 @@ end
 local function parseStructDesc(message_body, is_big_endian, tree, type_code)
     -- Read field count
     if (message_body ~= nil and message_body:len() > 0) then
-        local field_count, message_body = decodeSize(message_body, is_big_endian, false)
+        local field_count, message_body = decodeSize(message_body, is_big_endian)
         if (field_count ~= nil and message_body ~= nil and message_body:len() > 0) then
             -- Parse each field: name + FieldDesc
             for i = 1, field_count do
-                local field_name, message_body = decodeString(message_body, is_big_endian, false)
+                local field_name, message_body = decodeString(message_body, is_big_endian)
                 message_body = parseFieldDesc(message_body, is_big_endian, tree, field_name)
             end
         end
@@ -599,11 +634,11 @@ end
 local function parseUnionDesc(message_body, is_big_endian, tree, type_code)
     -- Read field count
     if (message_body ~= nil and message_body:len() > 0) then
-        local field_count, message_body = decodeSize(message_body, is_big_endian, false)
+        local field_count, message_body = decodeSize(message_body, is_big_endian)
         if (field_count ~= nil and message_body ~= nil and message_body:len() > 0) then
             -- Parse each field: name + FieldDesc
             for i = 1, field_count do
-                local field_name, message_body = decodeString(message_body, is_big_endian, false)
+                local field_name, message_body = decodeString(message_body, is_big_endian)
                 message_body = parseFieldDesc(message_body, is_big_endian, tree, field_name)
             end
         end
@@ -641,13 +676,49 @@ parseFieldDesc = function(buf, is_big_endian, tree, field_name)
 
     -- Read Type code
     local type_code = buf(0, 1):uint()
-    buf = buf(1)
+    buf = buf:range(1)
     local type_name = PVD_TYPES[type_code] or string.format("unknown(0x%02X)", type_code)
 
     local field_tree
 
-    if type_code == TYPE_CODE_STRUCT or type_code == TYPE_CODE_UNION then
-        -- Read optional Type ID string
+    -- Handle introspection types first (0xFD, 0xFE, 0xFF)
+    if type_code == FIELD_DESC_TYPE_FULL then
+        -- FULL_WITH_ID: 0xFD + 16-bit type-ID + FieldDesc
+        if buf:len() < 2 then
+            return buf
+        end
+
+        local type_id = getUint(buf(0, 2), is_big_endian)
+        local display_name = field_name and string.format("%s (FULL_ID: %d)", field_name, type_id)
+                or string.format("FULL_ID: %d", type_id)
+        field_tree = tree:add(buf(0, 2), display_name)
+        buf = buf(2):tvb()
+
+        -- Parse the following FieldDesc recursively
+        if buf:len() > 0 then
+            buf = parseFieldDesc(buf, is_big_endian, field_tree, nil)
+        end
+
+    elseif type_code == FIELD_DESC_TYPE_ID_ONLY then
+        -- ONLY_ID: 0xFE + 16-bit type-ID (reference to cached type)
+        if buf:len() < 2 then
+            return buf
+        end
+
+        local type_id = getUint(buf(0, 2), is_big_endian)
+        local display_name = field_name and string.format("%s (ONLY_ID: %d)", field_name, type_id)
+                or string.format("ONLY_ID: %d", type_id)
+        field_tree = tree:add(buf(0, 2), display_name)
+        buf = buf(2):tvb()
+
+    elseif type_code == FIELD_DESC_NULL then
+        -- NULL_TYPE: 0xFF (null field)
+        local display_name = field_name and string.format("%s (NULL)", field_name)
+                or "NULL"
+        field_tree = tree:add(type_code, display_name)
+
+    elseif type_code == TYPE_CODE_STRUCT or type_code == TYPE_CODE_UNION then
+        -- Regular struct/union with optional Type ID string
         local type_id, buf, translated_name = getTypeId(buf, is_big_endian)
         local clean_name = "struct"
         if type_code == TYPE_CODE_UNION then clean_name = "union" end
@@ -666,20 +737,25 @@ parseFieldDesc = function(buf, is_big_endian, tree, field_name)
         local display_name = field_name and string.format("%s (0x%02X: %s)", field_name, type_code, clean_name)
                 or string.format("(0x%02X: %s)", type_code, clean_name)
         field_tree = tree:add(type_code, display_name)
-    else
-        field_tree = tree:add(placeholder, "Body")
-    end
 
-    -- Handle TypeCode-specific parsing
-    if type_code == TYPE_CODE_STRUCT then
-        buf = parseStructDesc(buf, is_big_endian, field_tree, type_code)
-    elseif type_code == TYPE_CODE_UNION then
-        buf = parseUnionDesc(buf, is_big_endian, field_tree, type_code)
+        -- Parse struct/union content
+        if type_code == TYPE_CODE_STRUCT then
+            buf = parseStructDesc(buf, is_big_endian, field_tree, type_code)
+        elseif type_code == TYPE_CODE_UNION then
+            buf = parseUnionDesc(buf, is_big_endian, field_tree, type_code)
+        end
+
     elseif type_code == CACHE_STORE_CODE then
+        -- Cache operations (context-dependent use of 0xFD)
         buf = parseCacheStore(buf, is_big_endian, field_tree)
     elseif type_code == CACHE_FETCH_CODE then
+        -- Cache operations (context-dependent use of 0xFE)
         buf = parseCacheFetch(buf, is_big_endian, field_tree)
-        -- All other types (scalars, arrays) are just TypeCode - no additional data
+    else
+        -- Scalar types and arrays - just TypeCode, no additional parsing needed
+        local display_name = field_name and string.format("%s (0x%02X: %s)", field_name, type_code, type_name)
+                or string.format("(0x%02X: %s)", type_code, type_name)
+        field_tree = tree:add(type_code, display_name)
     end
 
     return buf
@@ -689,50 +765,7 @@ end
 -- MONITOR-INIT PARSER (uses unified FieldDesc system)
 -- ===================================================================
 
-local function parseMonitorInit(message_body, pkt, tree, is_big_endian)
-    if not message_body or message_body:len() == 0 then
-        return
-    end
 
-    -- Parse ChangedBitSet
-    local bitset_byte = message_body(0, 1):uint()
-    local bits_set = {}
-    for i = 0, 7 do
-        if bit.band(bitset_byte, bit.lshift(1, i)) ~= 0 then
-            table.insert(bits_set, i)
-        end
-    end
-    local bits_str = table.concat(bits_set, ",")
-    local field_tree = tree:add(message_body, "Body")
-
-    field_tree:add(message_body(0, 1), string.format("ChangedBitSet: 0x%02X (bits: %s)", bitset_byte, bits_str))
-    message_body = message_body(1):tvb()
-
-    -- Parse FieldDesc structure (starts with field count)
-    if message_body and message_body:len() > 0 then
-        local field_count, remaining_buf = decodeSize(message_body, is_big_endian, false)
-        if field_count then
-            message_body = remaining_buf
-
-            if field_count > 0 then
-                -- Parse each field using unified system
-                for i = 1, field_count do
-                    if not message_body or message_body:len() <= 0 then break end
-
-                    local field_name, remaining_buf = decodeString(message_body, is_big_endian, false)
-                    if not field_name then break end
-                    message_body = remaining_buf
-                    message_body = parseFieldDesc(message_body, is_big_endian, field_tree, field_name:string())
-                end
-            end
-        end
-
-        -- Show remaining data if any
-        if message_body and message_body:len() > 0 then
-            tree:add(message_body, string.format("Remaining data (%d bytes)", message_body:len()))
-        end
-    end
-end
 
 function decodePVData(buf, pkt, t, is_big_endian, label)
     if not buf or buf:len() == 0 then
@@ -1193,24 +1226,15 @@ local function pvaGenericServerOpDecoder (message_body, pkt, tree, is_big_endian
     -- Skip the header
     message_body = message_body(GENERIC_COMMAND_HEADER):tvb()
 
-    -- Define monitor-specific flags for clarity
-    local is_monitor_init = cmd == MONITOR_MESSAGE and bit.band(sub_command, 0x08) ~= 0
-    local is_monitor_update = cmd == MONITOR_MESSAGE and bit.band(sub_command, 0x08) == 0
-
     -- Status handling: All messages except MONITOR UPDATE have status
+    local is_monitor_update = cmd == MONITOR_MESSAGE and bit.band(sub_command, 0x08) == 0
     if not is_monitor_update then
         message_body = decodeStatus(message_body, tree, is_big_endian)
     end
 
-    -- Process remaining payload
+    -- Process remaining payload - all messages use unified field parsing
     if message_body and message_body:len() > 0 then
-        if is_monitor_init then
-            -- MONITOR INIT: Contains type information after status
-            parseMonitorInit(message_body, pkt, tree, is_big_endian)
-        else
-            -- All other cases: Regular PVData
-            decodePVData(message_body, pkt, tree, is_big_endian, "PVData Body")
-        end
+        decodePVData(message_body, pkt, tree, is_big_endian, "PVData Body")
     end
 
     pkt.cols.info:append(string.format("%s(ioid=%u, sub=%02x), ", cname, ioid, sub_command))

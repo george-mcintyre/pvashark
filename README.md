@@ -366,10 +366,10 @@ sub‑commands are in **byte 0** of payload.  Most channel operations use the fo
       │  ├─ severity (0x22: int32_t): 
       │  ├─ status (0x22: int32_t):  
       │  └─ message (0x60: string):  
-      └─ timeStamp (0x80: time_t) 
-         ├─ secondsPastEpoch (0x23: int64_t): 
-         ├─ nanoseconds: (0x22: int32_t): 
-         └─ userTag (0x22: int32_t): 
+      ├─ timeStamp (0x80: time_t) 
+      │  ├─ secondsPastEpoch (0x23: int64_t): 
+      │  ├─ nanoseconds: (0x22: int32_t): 
+      │  └─ userTag (0x22: int32_t): 
 ```
 
 #### 4.4.2 Client GET Simple Scalar Byte
@@ -445,13 +445,28 @@ All application messages whose payload carries data (or introspection) use the *
 
 Either layer may be omitted when the peer already caches that information (see the *type cache* rules below).
 
+
 ### 6.1 Variable‑length primitives used everywhere
 
-| Name         | Purpose                  | Encoding rule                                                                                                        |
-|--------------|--------------------------|----------------------------------------------------------------------------------------------------------------------|
-| **Size**     | Element or string length | 1 byte if `<254`; byte `0xFE` then 32‑bit LE length if `≥254`; byte `0xFF` may be used by Java to mean *null* string |
-| **Selector** | Union element index      | Same as *Size* but value `0xFF` → *empty* union                                                                      |
-| **BitSet**   | "changed‑fields" bitmap  | *Size* (#bytes) followed by packed little‑endian bytes of the bitmap                                                 |
+| Name         | Purpose                  | Encoding rule                                                                                          |
+|--------------|--------------------------|--------------------------------------------------------------------------------------------------------|
+| **Size**     | Element or String length | 3-tier encoding: 1 byte (0x00-0xFE), 5 bytes (0xFF + 4-byte), or 13 bytes (0xFF + 0x7FFFFFFF + 8-byte) |
+| **Selector** | Union element index      | Same as *Size* but value `0xFF` → *empty* union                                                        |
+| **BitSet**   | "changed‑fields" bitmap  | *Size* (#bytes) followed by packed little‑endian bytes of the bitmap                                   |
+
+#### 6.1.1 Size Encoding Details
+
+The **Size** encoding uses a 3-tier scheme to efficiently represent values from 0 to 2^63-1:
+
+| First byte on wire               | Total bytes on wire | Value range represented                   | Notes                                                                                              |
+|----------------------------------|---------------------|-------------------------------------------|----------------------------------------------------------------------------------------------------|
+| `0x00` … `0xFE`                  | 1 byte              | 0 – 254                                   | Value is the byte itself                                                                           |
+| `0xFF` + 4-byte N                | 5 bytes             | 255 – 2,147,483,646                       | N is signed 32-bit little-endian; MUST be < 2^31-1                                                 |
+| `0xFF` + `0x7FFFFFFF` + 8-byte L | 13 bytes            | 2,147,483,647 – 9,223,372,036,854,775,807 | The 4-byte sentinel `0x7FFFFFFF` says "size continues in 64-bit". L is signed 64-bit little-endian |
+
+**Key points:**
+- All meta-types (BitSet, union selector, etc.) that are "encoded as a Size" inherit this same 3-tier scheme
+- `0xFF 0xFF 0x00 0x00 0x00 0x00` indicates an empty Union in a Union Selector
 
 > *Strings* use **Size + UTF‑8 bytes**.  
 > *Arrays* use **Size + payload elements**.
@@ -467,18 +482,68 @@ Alignment: Except for segmentation padding, structures are packed; there is **no
 
 ---
 
-## 7. Introspection (Type Descriptors = FieldDesc)
+## 7. Introspection
 
-Complex payloads start with a **FieldDesc tree** that fully describes the PVStructure or PVScalarArray layout.  
-The descriptors are **interned** per connection; both sides cache them by integer **IF‑ID** to avoid resending.  
-Whenever a sender wishes to refer to an already‑sent layout it can send the compact "`<<int id>>`" form instead of repeating the full tree.
+### 7.1 Why introspection exists
 
-### 7.1 TypeCode System
+pvAccess allows arbitrary, nested pvData structures. To avoid resending the same type description every time,
+the sender assigns a 16‑bit type‑ID and sends the full description once. Later messages can refer to the same
+type with the much shorter “ID‑only” form. The rules are normative: a sender must send the full form before the first ID‑only reference, and the mapping is per connection and per direction  ￼.
+
+| Lead byte(s)                        | Name                       | Payload that follows                                                                |
+|-------------------------------------|----------------------------|-------------------------------------------------------------------------------------|
+| `0xFF`                              | `NULL_TYPE_CODE`           | Nothing. Means “no introspection here (and no user data that would need it)”.       |
+| `0xFE` `<id>`                       | `ONLY_ID_TYPE_CODE`        | 2‑byte id (little‑ or big‑endian = connection byte order).                          | 
+| `0xFD` `<id>` `<FieldDesc>`         | `FULL_WITH_ID_TYPE_CODE`   | 2‑byte id then the complete FieldDesc tree.                                         | 
+| `0xFC` `<id>` `<tag>` `<FieldDesc>` | `FULL_TAGGED_ID_TYPE_CODE` | As above plus a 32‑bit tag used only on lossy transports.                           |
+| `0x00` ... `0xDF`                   | `FULL_TYPE_CODE`           | Stand‑alone FieldDesc with no ID (rare in TCP; mainly inside Variant‑Union values). |
+
+#### 7.1.1 Where each form is seen in pvAccess messages
+
+##### 7.1.1.1  `INIT` responses (server → client)
+
+| Command                  | Message                    | Field that carries introspection                 | Typical first send      | 
+|--------------------------|----------------------------|--------------------------------------------------|-------------------------|
+| Channel GET              | channelGetResponseInit     | pvStructureIF                                    | FULL_WITH_ID            | 
+| Channel PUT              | channelPutResponseInit     | pvPutStructureIF                                 | FULL_WITH_ID            |
+| Channel PUT‑GET          | channelPutGetResponseInit  | pvPutStructureIF, pvGetStructureIF               | FULL_WITH_ID            |
+| Channel MONITOR          | channelMonitorResponseInit | pvStructureIF                                    | FULL_WITH_ID            | 
+| Channel ARRAY            | channelArrayResponseInit   | pvArrayIF                                        | FULL_WITH_ID            | 
+| Channel PROCESS          | channelProcessResponseInit | (none – only status)                             |                         |
+| Get‑Field (command 0x11) | channelGetFieldResponse    | subFieldIF                                       | FULL_WITH_ID or ONLY_ID | 
+| Beacon / Validation      | serverStatusIF, etc.       | May be NULL_TYPE_CODE if server sends no status. |                         |
+
+
+Complex payloads start with a **FieldDesc tree** that fully describes the `PVStructure` or `PVScalarArray` layout.  
+The descriptors are **interned** per connection; both sides cache them by integer `<id>` to avoid resending.  
+Whenever a sender wishes to refer to an already‑sent layout it can send the compact `ONLY_ID_TYPE_CODE` form instead of repeating the full tree.
+
+##### 7.1.1.2  Data responses (`GET`, `MONITOR` updates, `ARRAY` slices…)
+
+Once the type has been established, data‑bearing messages include no introspection at all.
+They start directly with:
+
+```text
+BitSet changedBitSet   // GET & MONITOR
+PVField valueData      // encoded per FieldDesc already cached
+(optional BitSet overrunBitSet)
+```
+
+For these messages we must look up the cached `FieldDesc` using the `type‑ID` that was assigned in the corresponding `INIT` step.  
+Then we will know the field name, and type (so how many bytes to pull and how to display them). The bit-set will show us what fields
+to get from the cached info and therefore how to decode the bytes that follow. 
+
+##### 7.1.1.3  Requests originating from the client
+
+If the client needs to embed a pvRequest structure (e.g. filter options) it follows the same rules: send FULL_WITH_ID the first time, then ONLY_ID in subsequent identical requests.
+
+
+## 8 TypeCode System
 
 Each node in a **FieldDesc tree** begins with **one opaque byte** `TypeCode`.
 The PVXS implementation maps these bytes exactly to the EPICS pvData enumeration:
 
-#### 7.1.1 Standard Type Codes
+### 8.1 Standard Type Codes
 
 **PVXS TypeCodes** (from `src/pvxs/data.h`):
 
@@ -506,25 +571,108 @@ The PVXS implementation maps these bytes exactly to the EPICS pvData enumeration
 > **Note**: These are the actual TypeCodes from the PVXS implementation (`src/pvxs/data.h`). The original document incorrectly listed codes 0x00-0x22.
 
 
-### 7.2 FieldDesc Tree Encoding
+### 8.2 FieldDesc Encoding (on‑wire introspection)
 
-The FieldDesc tree describes the structure of data fields. Each node follows this pattern:
+Every **FieldDesc** begins with one lead **TypeCode** byte whose bit layout is:
 
-| # | Field                 | Scalar | Struct/Union | Arrays | Content                             |
-|---|-----------------------|--------|--------------|--------|-------------------------------------|
-| 0 | **TypeCode**          | ✓      | ✓            | ✓      | 1 byte indicating the field type    |
-| 1 | **Type ID**           |        | ✓            |        | String identifier for the type      |
-| 1 | **Element Type**      |        |              | ✓      | Single FieldDesc for array elements |
-| 2 | **Field Count**       |        | ✓            |        | Number of sub-fields (Size-encoded) |
-| 3 | **Field Definitions** |        | ✓            |        | Repeated: field name + FieldDesc    |
-|   | ...                   |        | ...          |        | ...                                 |
+| bit(s) | Purpose                  | Value set                                                                                                                                                      |
+|--------|--------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 7‑5    | **Kind selector**        | `000` Bool & enum<br>`001`Integer<br>`010` Floating‑point<br>`011` String (UTF‑8)<br>`100` Complex (struct/union/variant/bounded‑string)<br>`101…111` Reserved |
+| 4‑3    | **Array flag**           | `00` Scalar<br>`01` Variable‑size array<br>`10` Bounded‑size array (followed by *Size* bound)<br>`11` Fixed‑size array (followed by *Size* count)              |
+| 2‑0    | **Kind‑specific detail** | see tables below                                                                                                                                               |
 
-**Where:**
-- **TypeCode**: Single byte from the PVXS type codes (see table above)
-- **Type ID**: Optional string name for the structure or union type
-- **Field Count**: Variable-length size indicating number of members
-- **Field Definitions**: For each member: field name (string) + nested FieldDesc
-- **Element Type**: For arrays: single FieldDesc describing the element type
+#### Integer detail bits (`kind=001`)
+
+| bits 2‑0 | Size   | Signedness                   |
+|----------|--------|------------------------------|
+| `00x`    | 8 bit  | `x=0` signed, `x=1` unsigned |
+| `01x`    | 16 bit | ”                            |
+| `10x`    | 32 bit | ”                            |
+| `11x`    | 64 bit | ”                            |  
+
+#### Floating‑point detail bits (`kind=010`)
+
+| bits 2‑0 | IEEE‑754 type                     |
+|----------|-----------------------------------|
+| `010`    | binary32 (float)                  |
+| `011`    | binary64 (double)                 |
+| `1xx`    | reserved (half/quad not yet used) |  
+
+#### Complex detail bits (`kind=100`)
+
+| bits 2‑0 | Meaning                   | Extra payload                                                       |
+|----------|---------------------------|---------------------------------------------------------------------|
+| `000`    | **Structure**             | *id* (string) + *fieldCount* (Size) + `fieldName + FieldDesc` × N   |
+| `001`    | **Union**                 | *id* (string) + *memberCount* (Size) + `memberName + FieldDesc` × N |
+| `010`    | **Variant Union** (“any”) | *no additional data*                                                |
+| `011`    | **Bounded String**        | *Size* bound (**bytes**)                                            |
+| `1xx`    | reserved                  |                                                                     |  
+
+Arrays of complex types carry **one extra FieldDesc** that describes the element type (after any optional bound/count).
+
+---
+
+#### Quick reference — lead‑byte patterns
+
+| Lead byte mask           | Interpretation                                      |
+|--------------------------|-----------------------------------------------------|
+| `0bxxx00xxx`             | Scalar (any kind)                                   |
+| `0bxxx01xxx`             | Variable‑size **array** (element kind in same byte) |
+| `0bxxx10xxx` + *Size*    | Bounded‑size **array**                              |
+| `0bxxx11xxx` + *Size*    | Fixed‑size **array**                                |
+| `0b10000000` + payload   | **Structure**                                       |
+| `0b10001000` + FieldDesc | Array of Structures                                 |
+| `0b10000001` + payload   | **Union**                                           |
+| `0b10001001` + FieldDesc | Array of Unions                                     |
+| `0b10000010`             | **Variant Union**                                   |
+| `0b10001010` + FieldDesc | Array of Variant Unions                             |
+| `0b10000110` + *Size*    | **Bounded String**                                  | 
+
+---
+
+#### Putting it together (Struct or Array example)
+
+A **Structure FieldDesc** therefore serialises as
+
+```text
+<lead‑byte 0x80 | 0x88>   // scalar or array flag
+ “typeID”                 // UTF‑8
+                          // member count
+repeat N times:
+ “memberName”
+                          // recursive
+```
+
+### Examples 
+
+A **scalar Int32**: typeCode `0b00100 010` → `0x22` (`kind=001` Int, signed, scalar) – no extra data.
+
+A **double[16]** fixed array: typeCode `kind=010` (float) + `11` (fixed array) + size bits `011` → `0x6B` followed by the **Size** value 16.
+
+A **NTScalar** for **double**: typeCode `0b10000 000` → `0x80` (`kind=100` (complex) + `00` (non-array) + `000` (struct))
+ - `0x80` typeCode 
+ - `0x15 65 70 69 63 73 3a 6e 74 2f 4e 54 53 63 61 6c 61 72 3a 31 2e 30` typeID
+   - `21` characters`"epics:nt/NTScalar:1.0"` 
+   - (required for struct/union only) 
+   - otherwise we just use "value" as the field name in the output
+ - `0x06` Field Count - size-encoded,
+ - FIELD 1
+   - `0x05 76 61 6c 75 65` typeId
+     - `5` characters`"value"`
+   - `0x43` - a **scalar double**: typeCode `0b01000 011` (`kind=010` (floating point) + `00` (non-array) + `011` (scalar))
+   - optional - 8-bytes-value depending if this is introspection-only or if it contains values as well
+ - other Normative Type FIELDS for NTScalar (`descriptor`, `alarm`, `timestamp`, `display`, `control`)
+   - other fields have their own typeIDs, and typeCodes which will determine how they are decoded
+
+---
+
+### Notes
+
+* **Type ID** is *only* present for `kind=100` **structure/union** (and their arrays) – it is *not* used for scalar or basic arrays
+* **Element Type** appears *only* for arrays of complex kinds; scalar arrays do **not** carry a second FieldDesc
+* **Field Count** is a **Size‑encoded integer** that precedes the repeated `(name + FieldDesc)` list.
+* Bounded/fixed arrays of scalars carry a **bound/count Size value**, not a nested FieldDesc. 
+* The lead‑byte flags, not separate columns, distinguish scalar vs. array and encode signed/unsigned and width for integers.
 
 #### 7.2.2 Encoding Examples
 
@@ -646,7 +794,7 @@ These are handled transparently by PVXS (`from_wire()` in `dataencode.cpp`) and 
 
 ---
 
-## 8. Value (PVField) Serialization
+## 9. Value (PVField) Serialization
 
 Given a `FieldDesc` the **value stream** that immediately follows is:
 
@@ -669,7 +817,7 @@ Given a `FieldDesc` the **value stream** that immediately follows is:
 
 > All multi‑byte scalars use the **byte‑order flag** negotiated in the message header.
 
-### 8.1 Union Encoding Details
+### 9.1 Union Encoding Details
 
 - **Selector**: Union discriminator indicating which union member is present
 - **Value**: Followed by that member's data
@@ -677,7 +825,7 @@ Given a `FieldDesc` the **value stream** that immediately follows is:
 
 ---
 
-## 9. ChangedBitSet (Monitor, Get replies)
+## 10. ChangedBitSet (Monitor, Get replies)
 
 For partial‑update messages a **BitSet** precedes the value stream.
 The *n*‑th bit set to `1` means "member *n* has been updated and its PVField appears in the payload".
@@ -686,16 +834,53 @@ Bit numbering matches the depth‑first order of the `FieldDesc` tree.
 
 ---
 
-## 10. Protocol Flow Example
+## 11. Protocol Flow Example
 
-### 10.1 MONITOR Request Flow
+### 11.1 MONITOR Request Flow
 
 1. Client sends MONITOR request with channel ID
-2. Server responds with introspection data (type definition)
-3. Server sends initial value
-4. Server sends updates when value changes
+2. Server responds with MONITOR-INIT (subcommand 0x08) containing introspection data
+3. Server sends monitor updates (subcommand 0x00) with ChangedBitSet + changed values
 
-### 10.2 ChannelGet Example
+### 11.2 MONITOR-INIT Response Structure
+
+In a channel monitor INIT response (subcommand 0x08), the payload layout is:
+
+```
+int32   requestID
+byte    subcommand (=0x08)
+Status  status        <-- 0xFF means OK, no strings follow
+Field   pvStructureIF <-- only present when status==OK/WARNING
+```
+
+**Key differences from monitor updates:**
+- **No ChangedBitSet** in MONITOR-INIT responses
+- ChangedBitSet is only sent in regular monitor update messages (subcommand 0x00)
+
+### 11.3 FULL_WITH_ID_TYPE_CODE (0xFD) 
+
+The special TypeCode `0xFD` means **FULL_WITH_ID_TYPE_CODE** - "I'm sending a full Field‑introspection description and assigning it an ID."
+
+**Wire format:**
+```
+0xFD                  FULL_WITH_ID_TYPE_CODE
+01 00                 16-bit type-ID (little-endian → ID = 1)
+80 15 "epics:nt/..."  First FieldDesc byte + Type ID string
+```
+
+**Example decode sequence:**
+```
+... FF FD 01 00 80 15 "epics:nt/NTScalar:1.0" ...
+```
+
+Decodes as:
+1. `FF` → Status OK
+2. `FD 01 00` → full introspection, assign type ID = 1
+3. `80 15 "epics:nt/NTScalar:1.0"` → FieldDesc for top-level NTScalar structure
+
+When the server later sends value updates (subcommand 0x00), it starts with a ChangedBitSet (e.g., `01 80` for bit 7 set) followed by the changed field values.
+
+### 11.4 ChannelGet Example
 
 A minimal **ChannelGet response** for a PV of type *double* might be:
 
@@ -736,7 +921,7 @@ A minimal **ChannelGet response** for a PV of type *double* might be:
 
 The same channel, when monitored, would begin with a `Monitor‑INIT` (type tree identical), then receive periodic **server→client** messages re‑using that tree and only sending a `BitSet` + `value` when the `value` field actually changes.
 
-### 10.3 ChannelPut Example
+### 11.5 ChannelPut Example
 
 A **ChannelPut request** for an **established channel** where the `Point` structure array type is already known, with values `[{3.412, 12.3123}, {-12.523, 20.2012}]` would be:
 
@@ -788,12 +973,12 @@ A **ChannelPut request** for an **established channel** where the `Point` struct
 
 ---
 
-## 11. Normative Types (NT) — Reference Structures
+## 12. Normative Types (NT) — Reference Structures
 
 The EPICS **Normative Types Specification** defines a library of standard PVStructure layouts that tools can rely on.
 Below are the core NT definitions (all field names *case‑sensitive*).
 
-### 11.1 Common auxiliary sub‑types
+### 12.1 Common auxiliary sub‑types
 
 | Name (`id`)   | Structure layout                                                                                                    |
 |---------------|---------------------------------------------------------------------------------------------------------------------|
@@ -801,55 +986,56 @@ Below are the core NT definitions (all field names *case‑sensitive*).
 | **time_t**    | `int64 secondsPastEpoch`, `int32 nanoseconds`, `int32 userTag`                                                      |
 | **display_t** | `double limitLow`, `double limitHigh`, `double displayLow`, `double displayHigh`, `string units`, `int32 precision` |
 
-### 11.2 Primary normative types
+### 12.2 Primary normative types
 
-| Type name         | Mandatory fields                                                                                           | Optional fields                                                               |
-|-------------------|------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------|
-| **NTScalar**      | `scalar_t value`                                                                                           | `string descriptor`, `alarm_t alarm`, `time_t timeStamp`, `display_t display` |
-| **NTScalarArray** | `scalar_t[] value`                                                                                         | same optionals as NTScalar                                                    |
-| **NTEnum**        | `string[] choices`, `int32 index`                                                                          | `string descriptor`, `alarm_t alarm`, `time_t timeStamp`                      |
-| **NTMatrix**      | `double[] value`, `int32[] dim`                                                                            | `alarm_t`, `time_t`, `display_t`                                              |
-| **NTNameValue**   | `string[] name`, `any[] value`                                                                             | —                                                                             |
-| **NTTable**       | `string[] labels`, `any[][] value`                                                                         | —                                                                             |
-| **NTURI**         | `string scheme`, `string authority`, `string path`, `string query`                                         | —                                                                             |
-| **NTNDArray**     | `uint8[] value`, `dimension_t[] dimension`, `time_t timeStamp`, `alarm_t alarm`, `attribute_t[] attribute` | many others (uniqueID, codec, ... see spec)                                   |
-| **NTAttribute**   | `string name`, `any value`, `string tags`                                                                  | `alarm_t`, `time_t`                                                           |
-| **NTHistogram**   | `double[] ranges`, `double[] value`                                                                        | `descriptor/alarm/timeStamp/display`                                          |
-| **NTAggregate**   | `double[] aggValue`, `string[] aggrName`                                                                   | …                                                                             |
+| Type name         | Mandatory fields                                                                                               | Optional fields                                                                                        |
+|-------------------|----------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------|
+| **NTScalar**      | `scalar_t value`                                                                                               | `string descriptor`, `alarm_t alarm`, <br>`time_t timeStamp`, `display_t display`, `control_t control` |
+| **NTScalarArray** | `scalar_t[] value`                                                                                             | same optionals as NTScalar                                                                             |
+| **NTEnum**        | `string[] choices`, `int32 index`                                                                              | `string descriptor`, `alarm_t alarm`, `time_t timeStamp`                                               |
+| **NTMatrix**      | `double[] value`, `int32[] dim`                                                                                | `alarm_t`, `time_t`, `display_t`                                                                       |
+| **NTNameValue**   | `string[] name`, `any[] value`                                                                                 | —                                                                                                      |
+| **NTTable**       | `string[] labels`, `any[][] value`                                                                             | —                                                                                                      |
+| **NTURI**         | `string scheme`, `string authority`, `string path`, `string query`                                             | —                                                                                                      |
+| **NTNDArray**     | `uint8[] value`, `dimension_t[] dimension`,<br> `time_t timeStamp`, `alarm_t alarm`, `attribute_t[] attribute` | many others (uniqueID, codec, ... see spec)                                                            |
+| **NTAttribute**   | `string name`, `any value`, `string tags`                                                                      | `alarm_t`, `time_t`                                                                                    |
+| **NTHistogram**   | `double[] ranges`, `double[] value`                                                                            | `descriptor/alarm/timeStamp/display`                                                                   |
+| **NTAggregate**   | `double[] aggValue`, `string[] aggrName`                                                                       | …                                                                                                      |
 
 > Each "_t" reference above is itself a structure defined in the spec and serialized using the same rules (TypeDesc + value).
 
-### 11.3 NTScalar Wire Format Example
+### 12.3 NTScalar Wire Format Example
 
 An NTScalar structure would be encoded as:
 
-| Description                           | Protocol                       | ...                | ...                       |
-|---------------------------------------|--------------------------------|--------------------|---------------------------|
-| TypeCode: struct                      | `0x80`                         |                    |                           |
-| Type ID (Size=22 + UTF-8 string)      | `0x16` `epics:nt/NTScalar:1.0` |                    |                           |
-| Field count: 3 fields                 |                                | `0x03`             |                           |
-| Field name (Size=5 + UTF-8 string)    |                                | `0x05` `value`     |                           |
-| Field type: uint32_t                  |                                | `0x26`             |                           |
-| Field name (Size=5 + UTF-8 string)    |                                | `0x05` `alarm`     |                           |
-| Field type: struct                    |                                | `0x80`             |                           |
-| Type ID:                              |                                | `0x07` `alarm_t`   |                           |
-| Field count: 3 fields                 |                                |                    | `0x03`                    |
-| Field name (Size=8 + UTF-8 string)    |                                |                    | `0x08` `severity`         |
-| Field type: int32_t                   |                                |                    | `0x22`                    |
-| Field name (Size=6 + UTF-8 string)    |                                |                    | `0x06` `status`           |
-| Field type: int32_t                   |                                |                    | `0x22`                    |
-| Field name (Size=7 + UTF-8 string)    |                                |                    | `0x07` `message`          |
-| Field type: string                    |                                |                    | `0x60`                    |
-| Field name (Size=9 + UTF-8 string)    |                                | `0x09` `timeStamp` |                           |
-| Field type: struct                    |                                | `0x80`             |                           |
-| Type ID (Size=6 + UTF-8 string)       |                                | `0x06` `time_t`    |                           |
-| Field count: 3 fields                 |                                |                    | `0x03`                    |
-| Field name (Size=17 + UTF-8 string)   |                                |                    | `0x11` `secondsPastEpoch` |
-| Field type: int64_t                   |                                |                    | `0x23`                    |
-| Field name (Size=11 + UTF-8 string)   |                                |                    | `0x0B` `nanoseconds`      |
-| Field type: int32_t                   |                                |                    | `0x22`                    |
-| Field name (Size=7 + UTF-8 string)    |                                |                    | `0x07` `userTag`          |
-| Field type: int32_t                   |                                |                    | `0x22`                    |
+| Description                          | Protocol                       | ...                | ...                       |
+|--------------------------------------|--------------------------------|--------------------|---------------------------|
+| TypeCode: struct                     | `0x80`                         |                    |                           |
+| Type ID (Size=22 + UTF-8 string)     | `0x16` `epics:nt/NTScalar:1.0` |                    |                           |
+| Field count: 6 fields                |                                | `0x06`             |                           |
+| Field name (Size=5 + UTF-8 string)   |                                | `0x05` `value`     |                           |
+| Field type: uint32_t                 |                                | `0x26`             |                           |
+| Field name (Size=5 + UTF-8 string)   |                                | `0x05` `alarm`     |                           |
+| Field type: struct                   |                                | `0x80`             |                           |
+| Type ID:                             |                                | `0x07` `alarm_t`   |                           |
+| Field count: 3 fields                |                                |                    | `0x03`                    |
+| Field name (Size=8 + UTF-8 string)   |                                |                    | `0x08` `severity`         |
+| Field type: int32_t                  |                                |                    | `0x22`                    |
+| Field name (Size=6 + UTF-8 string)   |                                |                    | `0x06` `status`           |
+| Field type: int32_t                  |                                |                    | `0x22`                    |
+| Field name (Size=7 + UTF-8 string)   |                                |                    | `0x07` `message`          |
+| Field type: string                   |                                |                    | `0x60`                    |
+| Field name (Size=9 + UTF-8 string)   |                                | `0x09` `timeStamp` |                           |
+| Field type: struct                   |                                | `0x80`             |                           |
+| Type ID (Size=6 + UTF-8 string)      |                                | `0x06` `time_t`    |                           |
+| Field count: 3 fields                |                                |                    | `0x03`                    |
+| Field name (Size=17 + UTF-8 string)  |                                |                    | `0x11` `secondsPastEpoch` |
+| Field type: int64_t                  |                                |                    | `0x23`                    |
+| Field name (Size=11 + UTF-8 string)  |                                |                    | `0x0B` `nanoseconds`      |
+| Field type: int32_t                  |                                |                    | `0x22`                    |
+| Field name (Size=7 + UTF-8 string)   |                                |                    | `0x07` `userTag`          |
+| Field type: int32_t                  |                                |                    | `0x22`                    |
+| etc - (descriptor, display, control) |                                |                    |                           |
 
 **Wireshark Display:**
 ```
@@ -859,15 +1045,15 @@ An NTScalar structure would be encoded as:
    │  ├─ severity (0x22: int32_t):
    │  ├─ status (0x22: int32_t):
    │  └─ message (0x60: string):
-   └─ timeStamp (0x80: time_t)
-      ├─ secondsPastEpoch (0x23: int64_t):
-      ├─ nanoseconds (0x22: int32_t):
-      └─ userTag (0x22: int32_t):
+   ├─ timeStamp (0x80: time_t)
+   │  ├─ secondsPastEpoch (0x23: int64_t):
+   │  ├─ nanoseconds (0x22: int32_t):
+   │  └─ userTag (0x22: int32_t):
 ```
 
 Normative‑type instances declare themselves by sending a `FieldDesc` whose **top‑level ID string** equals the NT name (e.g. `"epics:nt/NTScalar:1.0"`) so that generic GUIs can recognise and render them automatically.
 
-### 11.4 Key Points
+### 12.4 Key Points
 
 - **NTScalar value field**: Can contain either a scalar OR an array (scalar_t can be any basic type or array type)
 - **Arrays are fundamental**: Arrays are a core part of the protocol, not an extension
@@ -875,7 +1061,7 @@ Normative‑type instances declare themselves by sending a `FieldDesc` whose **t
 
 ---
 
-## 12. Array Support
+## 13. Array Support
 
 Arrays are fundamental to PVA protocol design. All basic types can be arrays:
 - `byte[]`, `int[]`, `double[]`, `string[]`, etc.
@@ -884,7 +1070,7 @@ Arrays are fundamental to PVA protocol design. All basic types can be arrays:
 
 ---
 
-## 13. Inter‑operability Notes
+## 14. Inter‑operability Notes
 
 * PVXS **never transmits fixed‑length strings or fixed‑width arrays**, even though the pvData type table reserves bit 4 of the TypeCode for such encodings (they are deprecated). Receivers should still reject TypeCodes with bit 4 set.
 * A single TCP connection may carry **multiple cached type trees**; each tree is keyed by the server‑assigned *TypeCache ID* (16‑bit).
@@ -893,9 +1079,9 @@ Arrays are fundamental to PVA protocol design. All basic types can be arrays:
 
 ---
 
-## 14. Command Reference
+## 15. Command Reference
 
-### 14.1 Complete Command Code Table
+### 15.1 Complete Command Code Table
 
 | Hex | Name                       | Description                    |
 |----:|----------------------------|--------------------------------|
