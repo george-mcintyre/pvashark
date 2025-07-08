@@ -322,7 +322,6 @@ local FieldRegistry = {}
 -- Initialize the registry
 FieldRegistry.data = {}
 FieldRegistry.roots = {}
-FieldRegistry.next_field_id = {}
 
 -- Add a field to the registry
 function FieldRegistry:addField(op_id, field_id, name, type_code, parent_field_id, type)
@@ -370,22 +369,11 @@ function FieldRegistry:addField(op_id, field_id, name, type_code, parent_field_i
     return field  -- Return the field object for immediate use
 end
 
--- Generate a unique field ID for an op_id
-function FieldRegistry:generateFieldId(op_id)
-    if not self.next_field_id[op_id] then
-        self.next_field_id[op_id] = 10000  -- Start at 10000 to avoid conflicts with wire protocol IDs
-    end
-    local field_id = self.next_field_id[op_id]
-    self.next_field_id[op_id] = field_id + 1
-    return field_id
-end
-
 -- Reset all fields for a specific op_id
 function FieldRegistry:resetFields(op_id)
     if self.data[op_id] then
         self.data[op_id] = nil
         self.roots[op_id] = nil
-        self.next_field_id[op_id] = nil
         return true
     end
     return false
@@ -442,8 +430,6 @@ function FieldRegistry:getSubFields(op_id, field_id)
             table.insert(sub_fields, sub_field)
         end
     end
-
-
 
     return sub_fields
 end
@@ -891,23 +877,9 @@ function decodeStruct(remaining_buf, is_big_endian, op_id, field_id, parent_fiel
             break
         end
         
-        -- Peek at the type code to determine if this sub-field needs a field ID
-        local sub_field_type_code = remaining_buf(0, 1):uint()
-        local sub_field_id = nil
-        
-        -- Generate field ID for complex types (struct, union, any)
-        if sub_field_type_code == TYPE_CODE_STRUCT or 
-           sub_field_type_code == TYPE_CODE_STRUCT_ARRAY or
-           sub_field_type_code == TYPE_CODE_UNION or 
-           sub_field_type_code == TYPE_CODE_UNION_ARRAY or
-           sub_field_type_code == TYPE_CODE_ANY or 
-           sub_field_type_code == TYPE_CODE_ANY_ARRAY then
-            sub_field_id = FieldRegistry:generateFieldId(op_id)
-        end
-        
         -- Sub-fields in a struct are regular field definitions
         local sub_field
-        sub_field, remaining_buf = decodeField(remaining_buf, is_big_endian, op_id, sub_field_id, field_id, field_name)
+        sub_field, remaining_buf = decodeField(remaining_buf, is_big_endian, op_id, nil, field_id, field_name)
         
         -- Check if remaining_buf is still valid after decodeField
         if not remaining_buf then
@@ -951,23 +923,9 @@ function decodeUnion(remaining_buf, is_big_endian, op_id, field_id, parent_field
             break
         end
         
-        -- Peek at the type code to determine if this sub-field needs a field ID
-        local sub_field_type_code = remaining_buf(0, 1):uint()
-        local sub_field_id = nil
-        
-        -- Generate field ID for complex types (struct, union, any)
-        if sub_field_type_code == TYPE_CODE_STRUCT or 
-           sub_field_type_code == TYPE_CODE_STRUCT_ARRAY or
-           sub_field_type_code == TYPE_CODE_UNION or 
-           sub_field_type_code == TYPE_CODE_UNION_ARRAY or
-           sub_field_type_code == TYPE_CODE_ANY or 
-           sub_field_type_code == TYPE_CODE_ANY_ARRAY then
-            sub_field_id = FieldRegistry:generateFieldId(op_id)
-        end
-        
         -- Sub-fields in a union are regular field definitions
         local sub_field
-        sub_field, remaining_buf = decodeField(remaining_buf, is_big_endian, op_id, sub_field_id, field_id, field_name)
+        sub_field, remaining_buf = decodeField(remaining_buf, is_big_endian, op_id, nil, field_id, field_name)
         
         -- Check if remaining_buf is still valid after decodeField
         if not remaining_buf then
@@ -977,8 +935,6 @@ function decodeUnion(remaining_buf, is_big_endian, op_id, field_id, parent_field
 
     return field, remaining_buf
 end
-
-
 
 -- Parse PVData for a field (recurses children) to extract and store a field definition
 function decodeField(pvdata_buf, is_big_endian, op_id, field_id, parent_field_id, given_name)
