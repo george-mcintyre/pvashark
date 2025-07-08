@@ -322,6 +322,7 @@ local FieldRegistry = {}
 -- Initialize the registry
 FieldRegistry.data = {}
 FieldRegistry.roots = {}
+FieldRegistry.next_field_id = {}
 
 -- Add a field to the registry
 function FieldRegistry:addField(op_id, field_id, name, type_code, parent_field_id, type)
@@ -369,11 +370,22 @@ function FieldRegistry:addField(op_id, field_id, name, type_code, parent_field_i
     return field  -- Return the field object for immediate use
 end
 
+-- Generate a unique field ID for an op_id
+function FieldRegistry:generateFieldId(op_id)
+    if not self.next_field_id[op_id] then
+        self.next_field_id[op_id] = 10000  -- Start at 10000 to avoid conflicts with wire protocol IDs
+    end
+    local field_id = self.next_field_id[op_id]
+    self.next_field_id[op_id] = field_id + 1
+    return field_id
+end
+
 -- Reset all fields for a specific op_id
 function FieldRegistry:resetFields(op_id)
     if self.data[op_id] then
         self.data[op_id] = nil
         self.roots[op_id] = nil
+        self.next_field_id[op_id] = nil
         return true
     end
     return false
@@ -430,6 +442,8 @@ function FieldRegistry:getSubFields(op_id, field_id)
             table.insert(sub_fields, sub_field)
         end
     end
+
+
 
     return sub_fields
 end
@@ -877,9 +891,23 @@ function decodeStruct(remaining_buf, is_big_endian, op_id, field_id, parent_fiel
             break
         end
         
+        -- Peek at the type code to determine if this sub-field needs a field ID
+        local sub_field_type_code = remaining_buf(0, 1):uint()
+        local sub_field_id = nil
+        
+        -- Generate field ID for complex types (struct, union, any)
+        if sub_field_type_code == TYPE_CODE_STRUCT or 
+           sub_field_type_code == TYPE_CODE_STRUCT_ARRAY or
+           sub_field_type_code == TYPE_CODE_UNION or 
+           sub_field_type_code == TYPE_CODE_UNION_ARRAY or
+           sub_field_type_code == TYPE_CODE_ANY or 
+           sub_field_type_code == TYPE_CODE_ANY_ARRAY then
+            sub_field_id = FieldRegistry:generateFieldId(op_id)
+        end
+        
         -- Sub-fields in a struct are regular field definitions
         local sub_field
-        sub_field, remaining_buf = decodeField(remaining_buf, is_big_endian, op_id, nil, field_id, field_name)
+        sub_field, remaining_buf = decodeField(remaining_buf, is_big_endian, op_id, sub_field_id, field_id, field_name)
         
         -- Check if remaining_buf is still valid after decodeField
         if not remaining_buf then
@@ -917,12 +945,40 @@ function decodeUnion(remaining_buf, is_big_endian, op_id, field_id, parent_field
     for i = 1, count do
         local field_name
         field_name, remaining_buf = decodeString(remaining_buf, is_big_endian)
-        -- (No debug print for subfields, to match struct style)
-        remaining_buf = decodePVField(remaining_buf, nil, is_big_endian, op_id, nil, true, field_name, field_id)
+        
+        -- Check if remaining_buf is valid before proceeding
+        if not remaining_buf or remaining_buf:len() == 0 then
+            break
+        end
+        
+        -- Peek at the type code to determine if this sub-field needs a field ID
+        local sub_field_type_code = remaining_buf(0, 1):uint()
+        local sub_field_id = nil
+        
+        -- Generate field ID for complex types (struct, union, any)
+        if sub_field_type_code == TYPE_CODE_STRUCT or 
+           sub_field_type_code == TYPE_CODE_STRUCT_ARRAY or
+           sub_field_type_code == TYPE_CODE_UNION or 
+           sub_field_type_code == TYPE_CODE_UNION_ARRAY or
+           sub_field_type_code == TYPE_CODE_ANY or 
+           sub_field_type_code == TYPE_CODE_ANY_ARRAY then
+            sub_field_id = FieldRegistry:generateFieldId(op_id)
+        end
+        
+        -- Sub-fields in a union are regular field definitions
+        local sub_field
+        sub_field, remaining_buf = decodeField(remaining_buf, is_big_endian, op_id, sub_field_id, field_id, field_name)
+        
+        -- Check if remaining_buf is still valid after decodeField
+        if not remaining_buf then
+            break
+        end
     end
 
     return field, remaining_buf
 end
+
+
 
 -- Parse PVData for a field (recurses children) to extract and store a field definition
 function decodeField(pvdata_buf, is_big_endian, op_id, field_id, parent_field_id, given_name)
@@ -938,6 +994,41 @@ function decodeField(pvdata_buf, is_big_endian, op_id, field_id, parent_field_id
 
     local remaining_buf = pvdata_buf:range(1)
 
+    -- Handle introspection type codes
+    if type_code == FIELD_DESC_TYPE_FULL then
+        -- 0xFD: FULL_WITH_ID_TYPE_CODE - extract the field ID and decode the field
+        if remaining_buf:len() < 2 then
+            return nil, remaining_buf
+        end
+        
+        local cached_field_id = getUint(remaining_buf(0, 2), is_big_endian)
+        remaining_buf = remaining_buf:range(2)
+        
+        -- Now decode the actual field definition, using the extracted field ID
+        return decodeField(remaining_buf, is_big_endian, op_id, cached_field_id, parent_field_id, given_name)
+        
+    elseif type_code == FIELD_DESC_TYPE_ID_ONLY then
+        -- 0xFE: ONLY_ID_TYPE_CODE - just reference an existing field ID
+        if remaining_buf:len() < 2 then
+            return nil, remaining_buf
+        end
+        
+        local cached_field_id = getUint(remaining_buf(0, 2), is_big_endian)
+        remaining_buf = remaining_buf:range(2)
+        
+        -- Look up the cached field and create a reference
+        local cached_field = FieldRegistry:getField(op_id, cached_field_id)
+        if cached_field and parent_field_id then
+            local parent_field = FieldRegistry:getField(op_id, parent_field_id)
+            if parent_field then
+                table.insert(parent_field.sub_field_refs, cached_field_id)
+            end
+        end
+        
+        return cached_field, remaining_buf
+    end
+
+    -- Handle regular field type codes
     if type_code == TYPE_CODE_STRUCT or type_code == TYPE_CODE_STRUCT_ARRAY or type_code == TYPE_CODE_ANY or type_code == TYPE_CODE_ANY_ARRAY then
         return decodeStruct(remaining_buf, is_big_endian, op_id, field_id, parent_field_id, type_code, given_name)
     elseif type_code == TYPE_CODE_UNION or type_code == TYPE_CODE_UNION_ARRAY then
@@ -1088,8 +1179,17 @@ function displayField(pvdata_buf, tree, is_big_endian, pvdata_type, field)
             -- don't move buffer pointer
         end
     else
-        -- For field definitions (not data), just show the field structure
-        if isArrayType(field.type_code) then
+        -- For field definitions (not data), show the field structure and recurse for structs/unions
+        if field.type_code == TYPE_CODE_STRUCT or field.type_code == TYPE_CODE_UNION then
+            -- Add a subtree for the struct/union in introspection mode
+            local sub_tree = tree:add(remaining_buf(0, 1), string.format("%s (0x%02X: %s)", field.name, field.type_code, field.type))
+            if field.op_id and field.field_id then
+                local sub_fields = FieldRegistry:getSubFields(field.op_id, field.field_id)
+                for i, sub_field in ipairs(sub_fields) do
+                    displayField(remaining_buf, sub_tree, is_big_endian, pvdata_type, sub_field)
+                end
+            end
+        elseif isArrayType(field.type_code) then
             tree:add(remaining_buf(0, 1), string.format("%s[] (0x%02X: %s[])", field.name, field.type_code, field.type))
         else
             tree:add(remaining_buf(0, 1), string.format("%s (0x%02X: %s)", field.name, field.type_code, field.type))
