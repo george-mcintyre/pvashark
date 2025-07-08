@@ -362,7 +362,7 @@ function FieldRegistry:addField(op_id, field_id, name, type_code, parent_field_i
             end
         end
     else
-        -- This is a root field (no parent)
+        -- This is a root field (has no parent)
         self.roots[op_id] = field
     end
 
@@ -765,7 +765,19 @@ end
 
 -- Helper function to identify authentication method strings
 local function isAuthMethod(method_name, prev_was_method)
-    local lower_case_method_name = method_name:string():lower()
+    if not method_name then
+        return false
+    end
+    
+    -- Handle both TvbRange and string types
+    local method_str
+    if type(method_name) == "string" then
+        method_str = method_name
+    else
+        method_str = method_name:string()
+    end
+    
+    local lower_case_method_name = method_str:lower()
 
     -- Strong method indicators
     local strong_methods = {"x509", "ca"}
@@ -865,10 +877,8 @@ function decodeStruct(remaining_buf, is_big_endian, op_id, field_id, parent_fiel
             break
         end
         
-        -- Sub-fields in a struct are regular field definitions, not introspection types
+        -- Sub-fields in a struct are regular field definitions
         local sub_field
-        
-        -- Sub-fields don't get field IDs unless they come from the wire protocol
         sub_field, remaining_buf = decodeField(remaining_buf, is_big_endian, op_id, nil, field_id, field_name)
         
         -- Check if remaining_buf is still valid after decodeField
@@ -1248,6 +1258,47 @@ function pvaDecodePVData(pvdata_buf, tree, is_big_endian, op_id, bitset)
     if remaining_buf and remaining_buf:len() > 0 then tree:add(remaining_buf, "Unrecognised Op Data") end
 end
 
+-- Parse MONITOR INIT introspection data (no ChangedBitSet)
+function pvaDecodeMonitorInit(pvdata_buf, tree, is_big_endian, op_id)
+    if pvdata_buf:len() < 1 then
+        return pvdata_buf
+    end
+    
+    local pvdata_type = pvdata_buf:range(0, 1):uint()
+    
+    if pvdata_type == FIELD_DESC_TYPE_ID_ONLY then
+        -- 0xFE: ONLY_ID - reference to cached type (no ChangedBitSet for MONITOR INIT)
+        if pvdata_buf:len() < 3 then
+            tree:add_expert_info(PI_MALFORMED, PI_ERROR, "Truncated field descriptor")
+            return pvdata_buf
+        end
+        
+        -- Field ID is 2 bytes in PVA protocol
+        local field_id = getUint(pvdata_buf:range(1, 2), is_big_endian)
+        
+        -- Add the cached field ID to display
+        tree:add(pvdata_buf(0,3), string.format("Cached Field ID: (0x%04x)", field_id))
+        
+        -- Lookup cached field definition
+        local field = FieldRegistry:getField(op_id, field_id)
+        
+        -- Display the field
+        if field then
+            displayField(pvdata_buf, tree, is_big_endian, pvdata_type, field, nil)
+        end
+        
+        -- Return empty buffer if we consumed all 3 bytes
+        if pvdata_buf:len() <= 3 then
+            return nil
+        else
+            return pvdata_buf:range(3)
+        end
+    else
+        -- For other introspection types, use the normal decoder
+        return decodePVField(pvdata_buf, tree, is_big_endian, op_id, nil, nil, nil, nil)
+    end
+end
+
 ----------------------------
 -- command decoders
 ----------------------------
@@ -1384,8 +1435,9 @@ local function pvaClientValidateDecoder (message_body, pkt, tree, is_big_endian)
     tree:add(fvalid_isize, message_body(4,2), isize)
     tree:add(fvalid_qos, message_body(6,2), qos)
 
+    local method_range = message_body(8)
     local method
-    method, message_body = decodeString(message_body(8), is_big_endian)
+    method, message_body = decodeString(method_range, is_big_endian)
 
     -- Declare variables for authz processing
     local n_authz = 0
@@ -1409,8 +1461,17 @@ local function pvaClientValidateDecoder (message_body, pkt, tree, is_big_endian)
     end
 
     -- Add appropriate info message based on method
-    if method:string():lower() == "x509" then
-        pkt.cols.info:append("X509 AUTHZ, ")
+    if method then
+        local method_str = type(method) == "string" and method or method:string()
+        if method_str:lower() == "x509" then
+            pkt.cols.info:append("X509 AUTHZ, ")
+        elseif has_authz_extensions then
+            if n_authz == 2 then
+                pkt.cols.info:append("CA AUTHZ, ")
+            elseif n_authz == 3 then
+                pkt.cols.info:append("PVA AUTHZ, ")
+            end
+        end
     elseif has_authz_extensions then
         if n_authz == 2 then
             pkt.cols.info:append("CA AUTHZ, ")
@@ -1421,7 +1482,9 @@ local function pvaClientValidateDecoder (message_body, pkt, tree, is_big_endian)
 
     -- Start with basic auth entry for the method
     local entry_tree = tree:add("AuthZ Entry 1")
-    entry_tree:add(fvalid_method, method)
+    if method then
+        entry_tree:add(fvalid_method, method_range, method)
+    end
 
     -- Process authz extensions if present
     if has_authz_extensions
@@ -1432,12 +1495,14 @@ local function pvaClientValidateDecoder (message_body, pkt, tree, is_big_endian)
             message_body = skipNextElement(message_body, is_big_endian)
             message_body = skipNextElement(message_body, is_big_endian)
 
-            account, message_body = decodeString(message_body, is_big_endian)
-            peer, message_body = decodeString(message_body, is_big_endian)
+            local account_range = message_body
+            account, message_body = decodeString(account_range, is_big_endian)
+            local peer_range = message_body
+            peer, message_body = decodeString(peer_range, is_big_endian)
 
             -- Add additional fields to the existing auth entry
-            entry_tree:add(fvalid_user, account)
-            entry_tree:add(fvalid_host, peer)
+            entry_tree:add(fvalid_user, account_range, account)
+            entry_tree:add(fvalid_host, peer_range, peer)
 
         elseif n_authz == 3
         then
@@ -1445,18 +1510,24 @@ local function pvaClientValidateDecoder (message_body, pkt, tree, is_big_endian)
             message_body = skipNextElement(message_body, is_big_endian)
             message_body = skipNextElement(message_body, is_big_endian)
 
-            peer, message_body = decodeString(message_body, is_big_endian)
-            authority, message_body = decodeString(message_body, is_big_endian)
-            account, message_body = decodeString(message_body, is_big_endian)
+            local peer_range = message_body
+            peer, message_body = decodeString(peer_range, is_big_endian)
+            local authority_range = message_body
+            authority, message_body = decodeString(authority_range, is_big_endian)
+            local account_range = message_body
+            account, message_body = decodeString(account_range, is_big_endian)
 
             -- Add additional fields to the existing auth entry
-            entry_tree:add(fvalid_host, peer)
+            entry_tree:add(fvalid_host, peer_range, peer)
             -- Only show AuthZ authority field when method is not 'ca'
-            if method:string():lower() ~= "ca" then
-                entry_tree:add(fvalid_authority, authority)
-                entry_tree:add(fvalid_isTLS, 1)
+            if method then
+                local method_str = type(method) == "string" and method or method:string()
+                if method_str:lower() ~= "ca" then
+                    entry_tree:add(fvalid_authority, authority_range, authority)
+                    entry_tree:add(fvalid_isTLS, 1)
+                end
             end
-            entry_tree:add(fvalid_user, account)
+            entry_tree:add(fvalid_user, account_range, account)
         end
     end
 end
@@ -1575,9 +1646,12 @@ local function pvaClientCreateChannelDecoder (message_body, pkt, tree, is_big_en
         tree:add(fsearch_cid, message_body(0,4), cid)
         local name
         name, message_body = decodeString(message_body(4), is_big_endian)
-        tree:add(fsearch_name, name)
-        if i< n_pvs -1 then pkt.cols.info:append("', '") end
-        pkt.cols.info:append("'"..name:string())
+        if name then
+            tree:add(fsearch_name, name)
+            if i< n_pvs -1 then pkt.cols.info:append("', '") end
+            local name_str = type(name) == "string" and name or name:string()
+            pkt.cols.info:append("'"..name_str)
+        end
     end
     pkt.cols.info:append("'), ")
 end
@@ -1670,6 +1744,11 @@ local function pvaGenericClientOpDecoder (message_body, pkt, tree, is_big_endian
                 if message_body and message_body:len() > 0 then
                     pvaDecodePVData(message_body, tree, is_big_endian, ioid, bitset)
                 end
+            elseif sub_command == 0x08 then
+                -- MONITOR INIT
+                if message_body:len() > 0 then
+                    pvaDecodeMonitorInit(message_body, tree, is_big_endian, ioid)
+                end
             else
                 if message_body:len() > 0 then
                     pvaDecodePVData(message_body, tree, is_big_endian, ioid)
@@ -1720,6 +1799,16 @@ local function pvaGenericServerOpDecoder (message_body, pkt, tree, is_big_endian
             -- Process remaining payload
             if message_body and message_body:len() > 0 then
                 pvaDecodePVData(message_body, tree, is_big_endian, ioid, bitset)
+            end
+        elseif sub_command == 0x08 then
+            -- MONITOR INIT - handle status then introspection data
+            if cmd == MONITOR_MESSAGE then
+                message_body = decodeStatus(message_body, tree, is_big_endian)
+            end
+            
+            -- Process introspection data
+            if message_body and message_body:len() > 0 then
+                pvaDecodeMonitorInit(message_body, tree, is_big_endian, ioid)
             end
         else
             -- Status handling: All messages except MONITOR UPDATE have status
