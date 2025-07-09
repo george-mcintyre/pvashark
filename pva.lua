@@ -538,6 +538,70 @@ function tvbToBinary(tvb_range)
 end
 
 ----------------------------------------------
+--- countFieldIndices: count how many field indices a field and its subfields occupy
+--- @param field the field to count indices for
+--- @param visited_ids table to track visited field IDs to prevent infinite recursion
+--- @return the number of indices this field occupies
+----------------------------------------------
+function countFieldIndices(field, visited_ids)
+    if not field then
+        return 0
+    end
+    
+    visited_ids = visited_ids or {}
+    local count = 1  -- The field itself takes 1 index
+    
+    -- If it's a struct/union, add all subfield indices
+    if (field.type_code == TYPE_CODE_STRUCT or field.type_code == TYPE_CODE_UNION) and 
+       field.op_id and field.field_id then
+        
+        -- Create a unique key for this field to detect circular references
+        local field_key = tostring(field.op_id) .. ":" .. tostring(field.field_id)
+        
+        -- Prevent infinite recursion
+        if visited_ids[field_key] then
+            return count  -- Just count this field, don't recurse
+        end
+        
+        visited_ids[field_key] = true
+        local sub_fields = FieldRegistry:getSubFields(field.op_id, field.field_id)
+        for _, sub_field in ipairs(sub_fields) do
+            count = count + countFieldIndices(sub_field, visited_ids)
+        end
+        visited_ids[field_key] = nil  -- Remove from visited after processing
+    end
+    
+    return count
+end
+
+----------------------------------------------
+--- isFieldInBitSet: check if a field should be displayed based on bitset
+--- @param bitset_str the binary string representation of the bitset
+--- @param field_index the field's index in the depth-first traversal
+----------------------------------------------
+function isFieldInBitSet(bitset_str, field_index)
+    if not bitset_str or bitset_str == "" then
+        -- No bitset means show all fields (full update)
+        return true
+    end
+
+    -- BitSet uses little-endian bit ordering
+    -- bit_index should be within the length of bitset_str
+    if field_index >= string.len(bitset_str) then
+        return false
+    end
+
+    -- PVA bitsets are little-endian: bit 0 is RIGHTMOST
+    -- Read from right to left: bit_position counts from the right
+    local bit_position_from_right = string.len(bitset_str) - field_index
+    local bit_char = string.sub(bitset_str, bit_position_from_right, bit_position_from_right)
+
+
+
+    return bit_char == "1"
+end
+
+----------------------------------------------
 --- getUint: get an unsigned integer with the correct byte order
 --- @param src to read the uint from
 --- @param is_big_endian flag to indicate the bigendianness
@@ -582,6 +646,80 @@ local function getInt(src, is_big_endian)
         else
             return src:le_int64():tonumber()
         end
+    end
+end
+
+----------------------------------------------
+--- getUintForDisplay: get an unsigned integer formatted for display (avoiding .0 suffix)
+--- @param src to read the uint from
+--- @param is_big_endian flag to indicate the bigendianness
+----------------------------------------------
+local function getUintForDisplay(src, is_big_endian)
+    if src:len() == 1 then
+        return tostring(src:byte())
+    end
+    if is_big_endian == nil or is_big_endian then
+        if src:len() == 2 then
+            return tostring(src:uint())
+        else
+            return tostring(src:uint64())
+        end
+    else
+        if src:len() == 2 then
+            return tostring(src:le_uint())
+        else
+            return tostring(src:le_uint64())
+        end
+    end
+end
+
+----------------------------------------------
+--- getIntForDisplay: get an integer formatted for display (avoiding .0 suffix)
+--- @param src to read the int from
+--- @param is_big_endian flag to indicate the bigendianness
+----------------------------------------------
+local function getIntForDisplay(src, is_big_endian)
+    if src:len() == 1 then
+        return tostring(src:byte())
+    end
+    if is_big_endian == nil or is_big_endian then
+        if src:len() == 2 then
+            return tostring(src:int())
+        else
+            return tostring(src:int64())
+        end
+    else
+        if src:len() == 2 then
+            return tostring(src:le_int())
+        else
+            return tostring(src:le_int64())
+        end
+    end
+end
+
+----------------------------------------------
+--- getFloat: get a float with the correct byte order
+--- @param src to read the float from
+--- @param is_big_endian flag to indicate the bigendianness
+----------------------------------------------
+local function getFloat(src, is_big_endian)
+    if is_big_endian == nil or is_big_endian then
+        return src:float()
+    else
+        return src:le_float()
+    end
+end
+
+----------------------------------------------
+--- getDouble: get a double with the correct byte order
+--- @param src to read the double from
+--- @param is_big_endian flag to indicate the bigendianness
+----------------------------------------------
+local function getDouble(src, is_big_endian)
+    if is_big_endian == nil or is_big_endian then
+        return src:float()  -- Wireshark's float() method handles both 32-bit and 64-bit
+    else
+        return src:le_float()  -- Wireshark's le_float() method handles both 32-bit and 64-bit
     end
 end
 
@@ -768,7 +906,7 @@ local function isAuthMethod(method_name, prev_was_method)
     if not method_name then
         return false
     end
-    
+
     -- Handle both TvbRange and string types
     local method_str
     if type(method_name) == "string" then
@@ -776,7 +914,7 @@ local function isAuthMethod(method_name, prev_was_method)
     else
         method_str = method_name:string()
     end
-    
+
     local lower_case_method_name = method_str:lower()
 
     -- Strong method indicators
@@ -834,10 +972,10 @@ function decodeStruct(remaining_buf, is_big_endian, op_id, field_id, parent_fiel
     if not remaining_buf or remaining_buf:len() == 0 then
         return nil, remaining_buf
     end
-    
+
     local type_id
     type_id, remaining_buf = decodeString(remaining_buf, is_big_endian)
-    
+
     -- Check if decodeString succeeded
     if not remaining_buf then
         return nil, nil
@@ -862,7 +1000,7 @@ function decodeStruct(remaining_buf, is_big_endian, op_id, field_id, parent_fiel
 
     local count
     count, remaining_buf = decodeSize(remaining_buf, is_big_endian)
-    
+
     -- Check if decodeSize succeeded
     if not remaining_buf then
         return field, nil
@@ -871,16 +1009,16 @@ function decodeStruct(remaining_buf, is_big_endian, op_id, field_id, parent_fiel
     for i = 1, count do
         local field_name
         field_name, remaining_buf = decodeString(remaining_buf, is_big_endian)
-        
+
         -- Check if remaining_buf is valid before proceeding
         if not remaining_buf or remaining_buf:len() == 0 then
             break
         end
-        
+
         -- Sub-fields in a struct are regular field definitions
         local sub_field
         sub_field, remaining_buf = decodeField(remaining_buf, is_big_endian, op_id, nil, field_id, field_name)
-        
+
         -- Check if remaining_buf is still valid after decodeField
         if not remaining_buf then
             break
@@ -917,16 +1055,16 @@ function decodeUnion(remaining_buf, is_big_endian, op_id, field_id, parent_field
     for i = 1, count do
         local field_name
         field_name, remaining_buf = decodeString(remaining_buf, is_big_endian)
-        
+
         -- Check if remaining_buf is valid before proceeding
         if not remaining_buf or remaining_buf:len() == 0 then
             break
         end
-        
+
         -- Sub-fields in a union are regular field definitions
         local sub_field
         sub_field, remaining_buf = decodeField(remaining_buf, is_big_endian, op_id, nil, field_id, field_name)
-        
+
         -- Check if remaining_buf is still valid after decodeField
         if not remaining_buf then
             break
@@ -956,22 +1094,22 @@ function decodeField(pvdata_buf, is_big_endian, op_id, field_id, parent_field_id
         if remaining_buf:len() < 2 then
             return nil, remaining_buf
         end
-        
+
         local cached_field_id = getUint(remaining_buf(0, 2), is_big_endian)
         remaining_buf = remaining_buf:range(2)
-        
+
         -- Now decode the actual field definition, using the extracted field ID
         return decodeField(remaining_buf, is_big_endian, op_id, cached_field_id, parent_field_id, given_name)
-        
+
     elseif type_code == FIELD_DESC_TYPE_ID_ONLY then
         -- 0xFE: ONLY_ID_TYPE_CODE - just reference an existing field ID
         if remaining_buf:len() < 2 then
             return nil, remaining_buf
         end
-        
+
         local cached_field_id = getUint(remaining_buf(0, 2), is_big_endian)
         remaining_buf = remaining_buf:range(2)
-        
+
         -- Look up the cached field and create a reference
         local cached_field = FieldRegistry:getField(op_id, cached_field_id)
         if cached_field and parent_field_id then
@@ -980,7 +1118,7 @@ function decodeField(pvdata_buf, is_big_endian, op_id, field_id, parent_field_id
                 table.insert(parent_field.sub_field_refs, cached_field_id)
             end
         end
-        
+
         return cached_field, remaining_buf
     end
 
@@ -1021,26 +1159,70 @@ function decodeField(pvdata_buf, is_big_endian, op_id, field_id, parent_field_id
 end
 
 -- Display a single field and move the buf pointer along - skip any non-scalar type_code
-function displayField(pvdata_buf, tree, is_big_endian, pvdata_type, field)
+function displayField(pvdata_buf, tree, is_big_endian, pvdata_type, field, bitset_str, field_index)
     if field == nil then
-        return nil
+        return nil, field_index or 0
     end
     local remaining_buf = pvdata_buf
+    local current_index = field_index or 0
+    
+
+
+
 
     if field.type_code == TYPE_CODE_STRUCT or
        field.type_code == TYPE_CODE_UNION or
        field.type_code == TYPE_CODE_STRUCT_ARRAY or
        field.type_code == TYPE_CODE_UNION_ARRAY then
-        -- Add a subtree for the struct/union
-        local sub_tree = tree:add(remaining_buf, string.format("%s (0x%02X: %s)", field.name, field.type_code, field.type))
+        
         if not field.op_id or not field.field_id then
-            return remaining_buf
+            return remaining_buf, current_index + 1
         end
+        
         local sub_fields = FieldRegistry:getSubFields(field.op_id, field.field_id)
-        for i, sub_field in ipairs(sub_fields) do
-            remaining_buf = displayField(remaining_buf, sub_tree, is_big_endian, pvdata_type, sub_field)
+        local sub_index = current_index + 1
+        
+        -- Check if this struct field should be displayed
+        if isFieldInBitSet(bitset_str, current_index) then
+            -- Struct bit is set - ALL subfields are present in data stream
+            local sub_tree = nil
+            if tree then
+                sub_tree = tree:add(remaining_buf, string.format("%s (0x%02X: %s)", field.name, field.type_code, field.type))
+            end
+
+            -- Pass nil for bitset to force reading all subfields since parent struct bit is set
+            for i, sub_field in ipairs(sub_fields) do
+                remaining_buf, sub_index = displayField(remaining_buf, sub_tree, is_big_endian, pvdata_type, sub_field, nil, sub_index)
+            end
+            return remaining_buf, sub_index
+        else
+            -- Struct bit is NOT set - check individual subfield bits
+            -- Some subfields may be present, others may not
+            local sub_tree = nil
+            local any_subfield_present = false
+            
+            -- First pass: check if any subfields are present
+            for i, sub_field in ipairs(sub_fields) do
+                if isFieldInBitSet(bitset_str, sub_index) then
+                    any_subfield_present = true
+                    break
+                end
+                sub_index = sub_index + 1
+            end
+            
+            -- Reset sub_index for actual processing
+            sub_index = current_index + 1
+            
+            if any_subfield_present and tree then
+                sub_tree = tree:add(remaining_buf, string.format("%s (0x%02X: %s)", field.name, field.type_code, field.type))
+            end
+            
+            -- Process each subfield individually based on its bit
+            for i, sub_field in ipairs(sub_fields) do
+                remaining_buf, sub_index = displayField(remaining_buf, sub_tree, is_big_endian, pvdata_type, sub_field, bitset_str, sub_index)
+            end
+            return remaining_buf, sub_index
         end
-        return remaining_buf
     end
 
     -- simple types
@@ -1048,111 +1230,258 @@ function displayField(pvdata_buf, tree, is_big_endian, pvdata_type, field)
     if pvdata_type == 0x00 then
         -- there is actual data to parse out and point to
         data_len = getTypeSize(field.type_code)
+
+        -- Add bounds checking for fixed-size types
+        if data_len > 0 and remaining_buf:len() < data_len then
+            if tree then  -- Only show error if we're displaying
+                tree:add_expert_info(PI_MALFORMED, PI_ERROR,
+                    string.format("Insufficient buffer for %s: need %d bytes, have %d",
+                    field.name or "field", data_len, remaining_buf:len()))
+            end
+            return remaining_buf, current_index + 1
+        end
+
+        -- Check if this field should be displayed based on bitset
+        -- If bitset_str is nil, it means parent struct bit was set, so display all subfields
+        local should_display
+        if bitset_str == nil then
+            -- Parent struct was selected, so display all subfields without bitset checking
+            should_display = tree ~= nil
+        else
+            -- Check individual field bit in bitset
+            should_display = isFieldInBitSet(bitset_str, current_index) and tree ~= nil
+        end
         if field.type_code == TYPE_CODE_BOOLEAN then
-            tree:add(remaining_buf(0, data_len), string.format("%s (0x%02X: %s): %s", field.name, field.type_code, field.type, tostring(remaining_buf(0, 1):uint() == 0)))
-            remaining_buf = remaining_buf:range(data_len)
+            if should_display then
+                tree:add(remaining_buf(0, data_len), string.format("%s (0x%02X: %s): %s", field.name, field.type_code, field.type, tostring(remaining_buf(0, 1):uint() == 0)))
+            end
+            if remaining_buf:len() >= data_len then
+                remaining_buf = remaining_buf:range(data_len)
+            else
+                remaining_buf = remaining_buf:range(remaining_buf:len())
+            end
+            return remaining_buf, current_index + 1
         elseif field.type_code == TYPE_CODE_BYTE then
-            tree:add(remaining_buf(0, data_len), string.format("%s (0x%02X: %s): %d", field.name, field.type_code, field.type, remaining_buf(0, 1):int()))
+            if should_display then
+                tree:add(remaining_buf(0, data_len), string.format("%s (0x%02X: %s): %d", field.name, field.type_code, field.type, remaining_buf(0, 1):int()))
+            end
             remaining_buf = remaining_buf:range(data_len)
+            return remaining_buf, current_index + 1
         elseif field.type_code == TYPE_CODE_UBYTE then
-            tree:add(remaining_buf(0, data_len), string.format("%s (0x%02X: %s): %d", field.name, field.type_code, field.type, remaining_buf(0, 1):uint()))
+            if should_display then
+                tree:add(remaining_buf(0, data_len), string.format("%s (0x%02X: %s): %d", field.name, field.type_code, field.type, remaining_buf(0, 1):uint()))
+            end
             remaining_buf = remaining_buf:range(data_len)
+            return remaining_buf, current_index + 1
         elseif field.type_code == TYPE_CODE_SHORT or field.type_code == TYPE_CODE_INT or field.type_code == TYPE_CODE_LONG then
-            tree:add(remaining_buf(0, data_len), string.format("%s (0x%02X: %s): %s", field.name, field.type_code, field.type, tostring(getUint(remaining_buf(0, data_len), is_big_endian))))
+            if should_display then
+                tree:add(remaining_buf(0, data_len), string.format("%s (0x%02X: %s): %s", field.name, field.type_code, field.type, getIntForDisplay(remaining_buf(0, data_len), is_big_endian)))
+            end
             remaining_buf = remaining_buf:range(data_len)
+            return remaining_buf, current_index + 1
         elseif field.type_code == TYPE_CODE_USHORT or field.type_code == TYPE_CODE_UINT or field.type_code == TYPE_CODE_ULONG then
-            tree:add(remaining_buf(0, data_len), string.format("%s (0x%02X: %s): %s", field.name, field.type_code, field.type, tostring(getInt(remaining_buf(0, data_len), is_big_endian))))
+            if should_display then
+                tree:add(remaining_buf(0, data_len), string.format("%s (0x%02X: %s): %s", field.name, field.type_code, field.type, getUintForDisplay(remaining_buf(0, data_len), is_big_endian)))
+            end
             remaining_buf = remaining_buf:range(data_len)
+            return remaining_buf, current_index + 1
         elseif field.type_code == TYPE_CODE_FLOAT then
-            tree:add(remaining_buf(0, data_len), string.format("%s (0x%02X: %s): %d", field.name, field.type_code, field.type, remaining_buf(0, 4):float()))
+            if should_display then
+                tree:add(remaining_buf(0, data_len), string.format("%s (0x%02X: %s): %g", field.name, field.type_code, field.type, getFloat(remaining_buf(0, data_len), is_big_endian)))
+            end
             remaining_buf = remaining_buf:range(data_len)
+            return remaining_buf, current_index + 1
         elseif field.type_code == TYPE_CODE_DOUBLE then
-            tree:add(remaining_buf(0, data_len), string.format("%s (0x%02X: %s): %d", field.name, field.type_code, field.type, remaining_buf(0, 8):double()))
+            if should_display then
+                tree:add(remaining_buf(0, data_len), string.format("%s (0x%02X: %s): %g", field.name, field.type_code, field.type, getDouble(remaining_buf(0, data_len), is_big_endian)))
+            end
             remaining_buf = remaining_buf:range(data_len)
+            return remaining_buf, current_index + 1
         elseif field.type_code == TYPE_CODE_STRING then
-            tree:add(remaining_buf(0, data_len), string.format("%s (0x%02X: %s): %d", field.name, field.type_code, field.type, remaining_buf(0, 1):string()))
-            remaining_buf = remaining_buf:range(data_len)
+            local str_value, after_string_buf = decodeString(remaining_buf, is_big_endian)
+            if str_value then
+                local consumed = remaining_buf:len() - (after_string_buf and after_string_buf:len() or 0)
+                if should_display then
+                    tree:add(remaining_buf(0, consumed), string.format("%s (0x%02X: %s): %s", field.name, field.type_code, field.type, str_value))
+                end
+                remaining_buf = after_string_buf or remaining_buf
+            else
+                if should_display then
+                    tree:add(remaining_buf(0, 1), string.format("%s (0x%02X: %s): [invalid string]", field.name, field.type_code, field.type))
+                end
+                remaining_buf = remaining_buf:range(1)
+            end
+            return remaining_buf, current_index + 1
         elseif field.type_code == TYPE_CODE_STRUCT then
-            local sub_tree = tree:add(remaining_buf(0, 1), string.format("%s (0x%02X: %s)", field.name, field.type_code, field.type))
+            -- When we reach a struct field, we need to read ALL its subfields from data
+            -- because they are present regardless of individual bits
             local sub_fields = FieldRegistry:getSubFields(field.op_id, field.field_id)
-            for _, sub_field in ipairs(sub_fields) do
-                remaining_buf = displayField(remaining_buf, sub_tree, is_big_endian, pvdata_type, sub_field)
+            local sub_index = current_index + 1
+
+            if should_display then
+                local sub_tree = tree:add(remaining_buf(0, 1), string.format("%s (0x%02X: %s)", field.name, field.type_code, field.type))
+                for _, sub_field in ipairs(sub_fields) do
+                    -- Pass nil for bitset since we're inside a struct that was selected
+                    remaining_buf, sub_index = displayField(remaining_buf, sub_tree, is_big_endian, pvdata_type, sub_field, nil, sub_index)
+                end
+            else
+                -- Field not displayed but still need to consume data for all subfields
+                for _, sub_field in ipairs(sub_fields) do
+                    remaining_buf, sub_index = displayField(remaining_buf, nil, is_big_endian, pvdata_type, sub_field, nil, sub_index)
+                end
             end
+            return remaining_buf, sub_index
         elseif field.type_code == TYPE_CODE_UNION then
-            local sub_tree = tree:add(remaining_buf(0, 1), string.format("%s (0x%02X: %s)", field.name, field.type_code, field.type))
+            -- When we reach a union field, we need to read ALL its data
             local sub_fields = FieldRegistry:getSubFields(field.op_id, field.field_id)
-            for _, sub_field in ipairs(sub_fields) do
-                remaining_buf = displayField(remaining_buf, sub_tree, is_big_endian, pvdata_type, sub_field)
+            local sub_index = current_index + 1
+
+            if should_display then
+                local sub_tree = tree:add(remaining_buf(0, 1), string.format("%s (0x%02X: %s)", field.name, field.type_code, field.type))
+                for _, sub_field in ipairs(sub_fields) do
+                    -- Pass nil for bitset since we're inside a union that was selected
+                    remaining_buf, sub_index = displayField(remaining_buf, sub_tree, is_big_endian, pvdata_type, sub_field, nil, sub_index)
+                end
+            else
+                -- Field not displayed but still need to consume data for all subfields
+                for _, sub_field in ipairs(sub_fields) do
+                    remaining_buf, sub_index = displayField(remaining_buf, nil, is_big_endian, pvdata_type, sub_field, nil, sub_index)
+                end
             end
+            return remaining_buf, sub_index
         elseif field.type_code == TYPE_CODE_STRUCT_ARRAY then
             local count = getUint32(remaining_buf, is_big_endian)
             remaining_buf = remaining_buf:range(4)
-            local array_tree = tree:add(remaining_buf(0, 1), string.format("%s[] (0x%02X: %s[])", field.name, field.type_code, field.type))
-            for i = 1, count do
-                local sub_tree = array_tree:add(remaining_buf(0, 1), string.format("%s[%d] (0x%02X: %s)", field.name, i - 1, field.type_code, field.type))
-                local sub_fields = FieldRegistry:getSubFields(field.op_id, field.field_id)
-                for _, sub_field in ipairs(sub_fields) do
-                    remaining_buf = displayField(remaining_buf, sub_tree, is_big_endian, pvdata_type, sub_field)
+            local sub_fields = FieldRegistry:getSubFields(field.op_id, field.field_id)
+            local sub_index = current_index + 1
+
+            if should_display then
+                local array_tree = tree:add(remaining_buf(0, 1), string.format("%s[] (0x%02X: %s[])", field.name, field.type_code, field.type))
+                for i = 1, count do
+                    local sub_tree = array_tree:add(remaining_buf(0, 1), string.format("%s[%d] (0x%02X: %s)", field.name, i - 1, field.type_code, field.type))
+                    for _, sub_field in ipairs(sub_fields) do
+                        -- Pass nil for bitset since we're inside a struct array that was selected
+                        remaining_buf, sub_index = displayField(remaining_buf, sub_tree, is_big_endian, pvdata_type, sub_field, nil, sub_index)
+                    end
+                end
+            else
+                -- Still need to consume data for all subfields even if not displaying
+                for i = 1, count do
+                    for _, sub_field in ipairs(sub_fields) do
+                        remaining_buf, sub_index = displayField(remaining_buf, nil, is_big_endian, pvdata_type, sub_field, nil, sub_index)
+                    end
                 end
             end
+            return remaining_buf, sub_index
         elseif field.type_code == TYPE_CODE_UNION_ARRAY then
-            tree:add(remaining_buf(0, data_len), string.format("%s (0x%02X: %s): %d", field.name, field.type_code, field.type, remaining_buf(0, 1):string()))
+            if should_display then
+                tree:add(remaining_buf(0, data_len), string.format("%s (0x%02X: %s): %s", field.name, field.type_code, field.type, remaining_buf(0, 1):string()))
+            end
             remaining_buf = remaining_buf:range(data_len)
+            return remaining_buf, current_index + 1
         elseif isArrayType(field.type_code) then
+            -- Check if we have enough bytes for the array count
+            if remaining_buf:len() < 4 then
+                if tree then  -- Only show error if we're displaying
+                    tree:add_expert_info(PI_MALFORMED, PI_ERROR,
+                        string.format("Insufficient buffer for array count: need 4 bytes, have %d", remaining_buf:len()))
+                end
+                return remaining_buf, current_index + 1
+            end
             local count = getUint32(remaining_buf, is_big_endian)
             remaining_buf = remaining_buf:range(4)
-            local array_tree = tree:add(remaining_buf(0, data_len * count), string.format("%s[] (0x%02X: %s[])", field.name, field.type_code, field.type))
+            local array_tree = nil
+            if should_display then
+                array_tree = tree:add(remaining_buf(0, data_len * count), string.format("%s[] (0x%02X: %s[])", field.name, field.type_code, field.type))
+            end
             for i = 1, count do
                 if field.type_code == TYPE_CODE_BOOLEAN_ARRAY then
-                    array_tree:add(remaining_buf(0, data_len), string.format("%s[%d] (0x%02X: %s): %s", field.name, i - 1, field.type_code, field.type, tostring(remaining_buf(0, 1):uint() == 0)))
+                    if array_tree then
+                        array_tree:add(remaining_buf(0, data_len), string.format("%s[%d] (0x%02X: %s): %s", field.name, i - 1, field.type_code, field.type, tostring(remaining_buf(0, 1):uint() == 0)))
+                    end
                 elseif field.type_code == TYPE_CODE_BYTE_ARRAY then
-                    array_tree:add(remaining_buf(0, data_len), string.format("%s[%d] (0x%02X: %s): %d", field.name, i - 1, field.type_code, field.type, remaining_buf(0, 1):int()))
+                    if array_tree then
+                        array_tree:add(remaining_buf(0, data_len), string.format("%s[%d] (0x%02X: %s): %d", field.name, i - 1, field.type_code, field.type, remaining_buf(0, 1):int()))
+                    end
                 elseif field.type_code == TYPE_CODE_UBYTE_ARRAY then
-                    array_tree:add(remaining_buf(0, data_len), string.format("%s[%d] (0x%02X: %s): %d", field.name, i - 1, field.type_code, field.type, remaining_buf(0, 1):uint()))
+                    if array_tree then
+                        array_tree:add(remaining_buf(0, data_len), string.format("%s[%d] (0x%02X: %s): %d", field.name, i - 1, field.type_code, field.type, remaining_buf(0, 1):uint()))
+                    end
                 elseif field.type_code == TYPE_CODE_SHORT_ARRAY or field.type_code == TYPE_CODE_INT_ARRAY or field.type_code == TYPE_CODE_LONG_ARRAY then
-                    array_tree:add(remaining_buf(0, data_len), string.format("%s[%d] (0x%02X: %s): %s", field.name, i - 1, field.type_code, field.type, tostring(getUint(remaining_buf(0, data_len), is_big_endian))))
-                elseif field.type_code == TYPE_CODE_USHORT or field.type_code == TYPE_CODE_UINT_ARRAY or field.type_code == TYPE_CODE_ULONG_ARRAY then
-                    array_tree:add(remaining_buf(0, data_len), string.format("%s[%d] (0x%02X: %s): %s", field.name, i - 1, field.type_code, field.type, tostring(getInt(remaining_buf(0, data_len), is_big_endian))))
+                    if array_tree then
+                        array_tree:add(remaining_buf(0, data_len), string.format("%s[%d] (0x%02X: %s): %s", field.name, i - 1, field.type_code, field.type, getIntForDisplay(remaining_buf(0, data_len), is_big_endian)))
+                    end
+                elseif field.type_code == TYPE_CODE_USHORT_ARRAY or field.type_code == TYPE_CODE_UINT_ARRAY or field.type_code == TYPE_CODE_ULONG_ARRAY then
+                    if array_tree then
+                        array_tree:add(remaining_buf(0, data_len), string.format("%s[%d] (0x%02X: %s): %s", field.name, i - 1, field.type_code, field.type, getUintForDisplay(remaining_buf(0, data_len), is_big_endian)))
+                    end
                 elseif field.type_code == TYPE_CODE_FLOAT_ARRAY then
-                    array_tree:add(remaining_buf(0, data_len), string.format("%s[%d] (0x%02X: %s): %d", field.name, i - 1, field.type_code, field.type, remaining_buf(0, 4):float()))
+                    if array_tree then
+                        array_tree:add(remaining_buf(0, data_len), string.format("%s[%d] (0x%02X: %s): %g", field.name, i - 1, field.type_code, field.type, getFloat(remaining_buf(0, data_len), is_big_endian)))
+                    end
                 elseif field.type_code == TYPE_CODE_DOUBLE_ARRAY then
-                    array_tree:add(remaining_buf(0, data_len), string.format("%s[%d] (0x%02X: %s): %d", field.name, i - 1, field.type_code, field.type, remaining_buf(0, 8):double()))
+                    if array_tree then
+                        array_tree:add(remaining_buf(0, data_len), string.format("%s[%d] (0x%02X: %s): %g", field.name, i - 1, field.type_code, field.type, getDouble(remaining_buf(0, data_len), is_big_endian)))
+                    end
                 elseif field.type_code == TYPE_CODE_STRING_ARRAY then
-                    array_tree:add(remaining_buf(0, data_len), string.format("%s[%d] (0x%02X: %s): %d", field.name, i - 1, field.type_code, field.type, remaining_buf(0, 1):string()))
+                    local str_value, after_string_buf = decodeString(remaining_buf, is_big_endian)
+                    if str_value then
+                        local consumed = remaining_buf:len() - (after_string_buf and after_string_buf:len() or 0)
+                        if array_tree then
+                            array_tree:add(remaining_buf(0, consumed), string.format("%s[%d] (0x%02X: %s): %s", field.name, i - 1, field.type_code, field.type, str_value))
+                        end
+                        remaining_buf = after_string_buf or remaining_buf
+                    else
+                        if array_tree then
+                            array_tree:add(remaining_buf(0, 1), string.format("%s[%d] (0x%02X: %s): [invalid string]", field.name, i - 1, field.type_code, field.type))
+                        end
+                        remaining_buf = remaining_buf:range(1)
+                    end
+                else
+                    -- For all other fixed-size array types
+                    remaining_buf = remaining_buf:range(data_len)
                 end
-                remaining_buf = remaining_buf:range(data_len)
             end
+            return remaining_buf, current_index + 1
         else
             -- just point to whole buffer
             data_len = pvdata_buf:len()
 
-            if isArrayType(field.type_code) then
-                tree:add(pvdata_buf(0, data_len), string.format("%s[] (0x%02X: %s[])", field.name, field.type_code, field.type))
-            else
-                tree:add(pvdata_buf(0, data_len), string.format("%s (0x%02X: %s)", field.name, field.type_code, field.type))
+            if should_display then
+                if isArrayType(field.type_code) then
+                    tree:add(pvdata_buf(0, data_len), string.format("%s[] (0x%02X: %s[])", field.name, field.type_code, field.type))
+                else
+                    tree:add(pvdata_buf(0, data_len), string.format("%s (0x%02X: %s)", field.name, field.type_code, field.type))
+                end
             end
 
             -- don't move buffer pointer
         end
+        return remaining_buf, current_index + 1
     else
         -- For field definitions (not data), show the field structure and recurse for structs/unions
         if field.type_code == TYPE_CODE_STRUCT or field.type_code == TYPE_CODE_UNION then
             -- Add a subtree for the struct/union in introspection mode
-            local sub_tree = tree:add(remaining_buf(0, 1), string.format("%s (0x%02X: %s)", field.name, field.type_code, field.type))
-            if field.op_id and field.field_id then
-                local sub_fields = FieldRegistry:getSubFields(field.op_id, field.field_id)
-                for i, sub_field in ipairs(sub_fields) do
-                    displayField(remaining_buf, sub_tree, is_big_endian, pvdata_type, sub_field)
+            if tree then
+                local sub_tree = tree:add(remaining_buf(0, 1), string.format("%s (0x%02X: %s)", field.name, field.type_code, field.type))
+                if field.op_id and field.field_id then
+                    local sub_fields = FieldRegistry:getSubFields(field.op_id, field.field_id)
+                    for i, sub_field in ipairs(sub_fields) do
+                        displayField(remaining_buf, sub_tree, is_big_endian, pvdata_type, sub_field, nil, 0)
+                    end
                 end
             end
         elseif isArrayType(field.type_code) then
-            tree:add(remaining_buf(0, 1), string.format("%s[] (0x%02X: %s[])", field.name, field.type_code, field.type))
+            if tree then
+                tree:add(remaining_buf(0, 1), string.format("%s[] (0x%02X: %s[])", field.name, field.type_code, field.type))
+            end
         else
-            tree:add(remaining_buf(0, 1), string.format("%s (0x%02X: %s)", field.name, field.type_code, field.type))
+            if tree then
+                tree:add(remaining_buf(0, 1), string.format("%s (0x%02X: %s)", field.name, field.type_code, field.type))
+            end
         end
+        return remaining_buf, current_index + 1
     end
-
-    return remaining_buf
 end
 
 -- Parse PVData, updating tree with structure and optional data, returning remaining buffer
@@ -1162,38 +1491,25 @@ function decodePVField(pvdata_buf, tree, is_big_endian, op_id, bitset_str, dont_
     end
 
     if bitset_str then
-        -- Data only
-        if pvdata_buf:len() < 1 then
-            return pvdata_buf
+        -- Data only - use cached field definition to build tree with data
+
+        -- Look up the root field from the cache
+        local root_field = nil
+        if FieldRegistry.roots and FieldRegistry.roots[op_id] then
+            root_field = FieldRegistry.roots[op_id]
         end
 
-        local remaining_buf = pvdata_buf
-
-        -- Lookup cached field definition
-        -- Process each bit position (rightmost bit is index 0)
-        for i = 1, #bitset_str do
-            local bit_index = #bitset_str - i  -- Convert to 0-based index from right
-            local bit_char = bitset_str:sub(i, i)
-
-            if bit_char == "1" then
-                local path, field = FieldRegistry:getIndexedField(op_id, bit_index)
-                if field then
-                    if field.type_code == TYPE_CODE_STRUCT then
-                    elseif field.type_code == TYPE_CODE_STRUCT_ARRAY then
-                    elseif field.type_code == TYPE_CODE_STRUCT_ARRAY then
-                    elseif field.type_code == TYPE_CODE_STRUCT_ARRAY then
-                    else
-                        if dont_display == nil or dont_display ~= true then
-                            remaining_buf = displayField(remaining_buf, tree, is_big_endian, pvdata_type, field)
-                        end
-                    end
-                end
+        if root_field then
+            -- Use the cached field definition to build proper hierarchical tree with data values
+                         -- Call displayField with pvdata_type = 0x00 to enable data parsing mode
+             if dont_display == nil or dont_display ~= true then
+                 remaining_buf, _ = displayField(pvdata_buf, tree, is_big_endian, 0x00, root_field, bitset_str, 0)
+             end
+        else
+            -- No cached field definition available
+            if dont_display == nil or dont_display ~= true then
+                tree:add_expert_info(PI_PROTOCOL, PI_WARN, "No cached field definition found for operation " .. tostring(op_id))
             end
-        end
-
-        -- display the field and get data from buffer
-        if dont_display == nil or dont_display ~= true then
-            remaining_buf = displayField(pvdata_buf, tree, is_big_endian, pvdata_type, field, name)
         end
 
         return remaining_buf
@@ -1209,7 +1525,7 @@ function decodePVField(pvdata_buf, tree, is_big_endian, op_id, bitset_str, dont_
 
         -- display the parsed field
         if dont_display == nil or dont_display ~= true then
-            displayField(pvdata_buf, tree, is_big_endian, pvdata_type, field, name)
+            displayField(pvdata_buf, tree, is_big_endian, pvdata_type, field, nil, 0)
         end
 
         return remaining_buf
@@ -1237,7 +1553,7 @@ function decodePVField(pvdata_buf, tree, is_big_endian, op_id, bitset_str, dont_
 
         -- display the parsed field
         if dont_display == nil or dont_display ~= true then
-            displayField(pvdata_buf, tree, is_big_endian, pvdata_type, field, name)
+            displayField(pvdata_buf, tree, is_big_endian, pvdata_type, field, nil, 0)
         end
 
         return remaining_buf
@@ -1269,7 +1585,7 @@ function decodePVField(pvdata_buf, tree, is_big_endian, op_id, bitset_str, dont_
 
         -- display the field and get data from buffer
         if dont_display == nil or dont_display ~= true then
-            remaining_buf = displayField(pvdata_buf, tree, is_big_endian, pvdata_type, field, name)
+            remaining_buf, _ = displayField(pvdata_buf, tree, is_big_endian, pvdata_type, field, nil, 0)
         end
 
         return remaining_buf
@@ -1285,15 +1601,15 @@ function decodePVField(pvdata_buf, tree, is_big_endian, op_id, bitset_str, dont_
         -- Need to reconstruct the buffer with the type code byte included
         local type_code_buf = pvdata_buf:range(0, 1)
         local combined_buf = pvdata_buf:range(0, remaining_buf:len() + 1)
-        
 
-        
+
+
         local field
         field, remaining_buf = decodeField(combined_buf, is_big_endian, op_id, nil, parent_field_id, name)
 
         -- display the parsed field
         if dont_display == nil or dont_display ~= true then
-            displayField(combined_buf, tree, is_big_endian, pvdata_type, field, name)
+            displayField(combined_buf, tree, is_big_endian, pvdata_type, field, nil, 0)
         end
 
         return remaining_buf
@@ -1314,35 +1630,44 @@ function pvaDecodePVData(pvdata_buf, tree, is_big_endian, op_id, bitset)
     if remaining_buf and remaining_buf:len() > 0 then tree:add(remaining_buf, "Unrecognised Op Data") end
 end
 
+-- Format field type for display
+function formatFieldType(field)
+    if not field or not field.type_code then
+        return "unknown"
+    end
+
+    return string.format("0x%02x: %s", field.type_code, field.type or "unknown")
+end
+
 -- Parse MONITOR INIT introspection data (no ChangedBitSet)
 function pvaDecodeMonitorInit(pvdata_buf, tree, is_big_endian, op_id)
     if pvdata_buf:len() < 1 then
         return pvdata_buf
     end
-    
+
     local pvdata_type = pvdata_buf:range(0, 1):uint()
-    
+
     if pvdata_type == FIELD_DESC_TYPE_ID_ONLY then
         -- 0xFE: ONLY_ID - reference to cached type (no ChangedBitSet for MONITOR INIT)
         if pvdata_buf:len() < 3 then
             tree:add_expert_info(PI_MALFORMED, PI_ERROR, "Truncated field descriptor")
             return pvdata_buf
         end
-        
+
         -- Field ID is 2 bytes in PVA protocol
         local field_id = getUint(pvdata_buf:range(1, 2), is_big_endian)
-        
+
         -- Add the cached field ID to display
         tree:add(pvdata_buf(0,3), string.format("Cached Field ID: (0x%04x)", field_id))
-        
+
         -- Lookup cached field definition
         local field = FieldRegistry:getField(op_id, field_id)
-        
+
         -- Display the field
         if field then
-            displayField(pvdata_buf, tree, is_big_endian, pvdata_type, field, nil)
+            displayField(pvdata_buf, tree, is_big_endian, pvdata_type, field, nil, 0)
         end
-        
+
         -- Return empty buffer if we consumed all 3 bytes
         if pvdata_buf:len() <= 3 then
             return nil
@@ -1861,7 +2186,7 @@ local function pvaGenericServerOpDecoder (message_body, pkt, tree, is_big_endian
             if cmd == MONITOR_MESSAGE then
                 message_body = decodeStatus(message_body, tree, is_big_endian)
             end
-            
+
             -- Process introspection data
             if message_body and message_body:len() > 0 then
                 pvaDecodeMonitorInit(message_body, tree, is_big_endian, ioid)
