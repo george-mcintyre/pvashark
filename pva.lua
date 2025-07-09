@@ -510,6 +510,14 @@ function isArrayType(type_code)
            type_code == TYPE_CODE_ANY_ARRAY
 end
 
+-- Check if a type code represents an complex type
+function isComplexType(type_code)
+    return type_code == TYPE_CODE_STRUCT or
+           type_code == TYPE_CODE_UNION or
+           type_code == TYPE_CODE_STRUCT_ARRAY or
+           type_code == TYPE_CODE_UNION_ARRAY
+end
+
 ----------------------------------------------
 --- tvbToBinary: get an binary string of digits from buffer
 --- @param tvb_range to read the bytes from
@@ -547,22 +555,22 @@ function countFieldIndices(field, visited_ids)
     if not field then
         return 0
     end
-    
+
     visited_ids = visited_ids or {}
     local count = 1  -- The field itself takes 1 index
-    
+
     -- If it's a struct/union, add all subfield indices
-    if (field.type_code == TYPE_CODE_STRUCT or field.type_code == TYPE_CODE_UNION) and 
+    if (field.type_code == TYPE_CODE_STRUCT or field.type_code == TYPE_CODE_UNION) and
        field.op_id and field.field_id then
-        
+
         -- Create a unique key for this field to detect circular references
         local field_key = tostring(field.op_id) .. ":" .. tostring(field.field_id)
-        
+
         -- Prevent infinite recursion
         if visited_ids[field_key] then
             return count  -- Just count this field, don't recurse
         end
-        
+
         visited_ids[field_key] = true
         local sub_fields = FieldRegistry:getSubFields(field.op_id, field.field_id)
         for _, sub_field in ipairs(sub_fields) do
@@ -570,7 +578,7 @@ function countFieldIndices(field, visited_ids)
         end
         visited_ids[field_key] = nil  -- Remove from visited after processing
     end
-    
+
     return count
 end
 
@@ -585,19 +593,17 @@ function isFieldInBitSet(bitset_str, field_index)
         return true
     end
 
-    -- BitSet uses little-endian bit ordering
+    -- BitSet String is in byte order left to right
     -- bit_index should be within the length of bitset_str
     if field_index >= string.len(bitset_str) then
         return false
     end
 
-    -- PVA bitsets are little-endian: bit 0 is RIGHTMOST
+    -- PVA bitsets are little-endian: bit 0 is rightmost
     -- Read from right to left: bit_position counts from the right
-    local bit_position_from_right = string.len(bitset_str) - field_index
-    local bit_char = string.sub(bitset_str, bit_position_from_right, bit_position_from_right)
-
-
-
+    local bit_pos = string.len(bitset_str) - field_index
+    local bit_char = string.sub(bitset_str, bit_pos, bit_pos)
+    print("BITSTRING: " .. bitset_str .. ", index: " .. field_index .. ", bit pos: " .. bit_pos  .. ", bit_char: " .. bit_char )
     return bit_char == "1"
 end
 
@@ -1158,6 +1164,55 @@ function decodeField(pvdata_buf, is_big_endian, op_id, field_id, parent_field_id
 
 end
 
+-- Display a single complex and move the buf pointer along
+function displaComplexField(remaining_buf, tree, is_big_endian, pvdata_type, field, bitset_str, current_index )
+    local sub_fields = FieldRegistry:getSubFields(field.op_id, field.field_id)
+    local sub_index = current_index + 1
+
+    -- Check if this struct field should be displayed
+    if isFieldInBitSet(bitset_str, current_index) then
+        -- Struct bit is set - ALL subfields are present in data stream
+        local sub_tree = nil
+        if tree then
+            sub_tree = tree:add(remaining_buf, string.format("%s (0x%02X: %s)", field.name, field.type_code, field.type))
+        end
+
+        -- Pass nil for bitset to force reading all subfields since parent struct bit is set
+        for i, sub_field in ipairs(sub_fields) do
+            remaining_buf, sub_index = displayField(remaining_buf, sub_tree, is_big_endian, pvdata_type, sub_field, nil, sub_index)
+        end
+        return remaining_buf, sub_index
+    else
+        -- Struct bit is NOT set - check individual subfield bits
+        -- Some subfields may be present, others may not
+        local sub_tree = nil
+        local any_subfield_present = false
+
+        -- First pass: check if any subfields are present
+        for i, sub_field in ipairs(sub_fields) do
+            if isFieldInBitSet(bitset_str, sub_index) then
+                any_subfield_present = true
+                break
+            end
+            sub_index = sub_index + 1
+        end
+
+        -- Reset sub_index for actual processing
+        sub_index = current_index + 1
+
+        if any_subfield_present and tree then
+            sub_tree = tree:add(remaining_buf, string.format("%s (0x%02X: %s)", field.name, field.type_code, field.type))
+        end
+
+        -- Process each subfield individually based on its bit
+        for i, sub_field in ipairs(sub_fields) do
+            remaining_buf, sub_index = displayField(remaining_buf, sub_tree, is_big_endian, pvdata_type, sub_field, bitset_str, sub_index)
+        end
+        return remaining_buf, sub_index
+    end
+
+end
+
 -- Display a single field and move the buf pointer along - skip any non-scalar type_code
 function displayField(pvdata_buf, tree, is_big_endian, pvdata_type, field, bitset_str, field_index)
     if field == nil then
@@ -1165,64 +1220,9 @@ function displayField(pvdata_buf, tree, is_big_endian, pvdata_type, field, bitse
     end
     local remaining_buf = pvdata_buf
     local current_index = field_index or 0
-    
 
-
-
-
-    if field.type_code == TYPE_CODE_STRUCT or
-       field.type_code == TYPE_CODE_UNION or
-       field.type_code == TYPE_CODE_STRUCT_ARRAY or
-       field.type_code == TYPE_CODE_UNION_ARRAY then
-        
-        if not field.op_id or not field.field_id then
-            return remaining_buf, current_index + 1
-        end
-        
-        local sub_fields = FieldRegistry:getSubFields(field.op_id, field.field_id)
-        local sub_index = current_index + 1
-        
-        -- Check if this struct field should be displayed
-        if isFieldInBitSet(bitset_str, current_index) then
-            -- Struct bit is set - ALL subfields are present in data stream
-            local sub_tree = nil
-            if tree then
-                sub_tree = tree:add(remaining_buf, string.format("%s (0x%02X: %s)", field.name, field.type_code, field.type))
-            end
-
-            -- Pass nil for bitset to force reading all subfields since parent struct bit is set
-            for i, sub_field in ipairs(sub_fields) do
-                remaining_buf, sub_index = displayField(remaining_buf, sub_tree, is_big_endian, pvdata_type, sub_field, nil, sub_index)
-            end
-            return remaining_buf, sub_index
-        else
-            -- Struct bit is NOT set - check individual subfield bits
-            -- Some subfields may be present, others may not
-            local sub_tree = nil
-            local any_subfield_present = false
-            
-            -- First pass: check if any subfields are present
-            for i, sub_field in ipairs(sub_fields) do
-                if isFieldInBitSet(bitset_str, sub_index) then
-                    any_subfield_present = true
-                    break
-                end
-                sub_index = sub_index + 1
-            end
-            
-            -- Reset sub_index for actual processing
-            sub_index = current_index + 1
-            
-            if any_subfield_present and tree then
-                sub_tree = tree:add(remaining_buf, string.format("%s (0x%02X: %s)", field.name, field.type_code, field.type))
-            end
-            
-            -- Process each subfield individually based on its bit
-            for i, sub_field in ipairs(sub_fields) do
-                remaining_buf, sub_index = displayField(remaining_buf, sub_tree, is_big_endian, pvdata_type, sub_field, bitset_str, sub_index)
-            end
-            return remaining_buf, sub_index
-        end
+    if isComplexType(field.type_code) then
+        return displaComplexField(remaining_buf, tree, is_big_endian, pvdata_type, field, bitset_str, current_index)
     end
 
     -- simple types
