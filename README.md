@@ -1265,3 +1265,55 @@ Arrays are fundamental to PVA protocol design. All basic types can be arrays:
 5. Captured network traffic analysis (July 2025)
 6. PVXS Protocol Documentation (GitHub: epics-base/pvxs)
 7. PVXS Source Implementation (epics-base/pvxs)
+
+## Appendix 1 : A decoding example
+
+```text
+                      i:   3         2         1         0
+                      i:  10987654321098765432109876543210
+Changed BitSet (4 bytes): 10000001111110110011001000011110
+  Effective:              11111111111111110011001000111110
+
+ i A E 
+00 0 0  value (0x80: NTScalar) → 1
+01 1 1  ├─ value (0x43: double)
+02 1 1  ├─ alarm (0x80: alarm_t) → 2
+03 1 1  │  ├─ severity (0x22: int32_t)
+04 1 1  │  ├─ status (0x22: int32_t)
+05 0 1  │  └─ message (0x60: string)
+06 0 0  ├─ timeStamp (0x80: struct) → 3
+07 0 0  │  ├─ secondsPastEpoch (0x23: int64_t)
+08 0 0  │  ├─ nanoseconds (0x22: int32_t)
+09 1 1  │  └─ userTag (0x22: int32_t)
+10 0 0  ├─ display (0x80: struct) → 4
+11 0 0  │  ├─ limitLow (0x43: double)
+12 1 0  │  ├─ limitHigh (0x43: double)
+13 1 1  │  ├─ description (0x60: string)
+14 0 1  │  ├─ units (0x60: string)
+15 0 1  │  ├─ precision (0x22: int32_t)
+16 1 1  │  └─ form (0x80: enum_t) → 5
+17 1 1  │     ├─ index (0x22: int32_t)         <-- All perfect up to here
+18 0 1  │     └─ choices (0x68: string[]):
+        |         ├─ choices[0]: "Default"     <-- in data but appears immediately after active (array of 7 strings) 
+        |         ├─ choices[1]: "String"      <-- in data 
+        |         ├─ choices[2]: "Binary"      <-- in data
+        |         ├─ choices[3]: "Decimal"     <-- in data
+        |         ├─ choices[4]: "Hex"         <-- in data
+        |         ├─ choices[5]: "Exponential" <-- in data
+        |         └─ choices[6]: "Engineering" <-- in data
+19 1 1  ├─ control (0x80: control_t) → 6                
+20 1 1  │  ├─ limitLow (0x43: double)          <-- immediately follows index in form
+21 1 1  │  ├─ limitHigh (0x43: double)         <-- follows
+22 1 1  │  └─ minStep (0x43: double)           <-- follows
+23 1 1  └─ valueAlarm (0x80: valueAlarm_t) → 7
+24 1 1     ├─ active (0x00: bool)              <-- follows but then immediately followed by an array of 7 strings
+25 0 1     ├─ lowAlarmLimit (0x43: double)     <-- immediately follows the last string in the string array
+26 0 1     ├─ lowWarningLimit (0x43: double)
+27 0 1     ├─ highWarningLimit (0x43: double)
+28 0 1     ├─ highAlarmLimit (0x43: double)
+29 0 1     ├─ lowAlarmSeverity (0x22: int32_t)
+30 0 1     ├─ lowWarningSeverity (0x22: int32_t)
+31 1 1     ├─ highWarningSeverity (0x22: int32_t)
+32 0 1     └─ highAlarmSeverity (0x22: int32_t)2
+
+```

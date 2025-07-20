@@ -400,20 +400,21 @@ end
 --- @param type_code number the field type code
 --- @return number the length of the integer type
 function getIntLen(type_code)
-    local b = bit.band(type_code, 0x06)
+    local b = bit.band(type_code, 0x03)  -- Extract bits 1-0 (not 2-1!)
     if b == 0x00 then
-        return 8
-    elseif b == 0x00 then
-        return 16
-    elseif b == 0x00 then
-        return 32
-    else
-        return 64
+        return 8   -- int8_t or uint8_t
+    elseif b == 0x01 then
+        return 16  -- int16_t or uint16_t
+    elseif b == 0x02 then
+        return 32  -- int32_t or uint32_t
+    else -- b == 0x03
+        return 64  -- int64_t or uint64_t
     end
 end
 
+
 function isIntSigned(type_code)
-    return bit.band(type_code, 0x01) == 0
+    return bit.band(type_code, 0x04) == 0
 end
 
 --- Helper function to get the name of the integer type
@@ -653,45 +654,63 @@ function FieldRegistry:getFields(request_id)
 end
 
 ----------------------------------------------
---- Fill out the bitset string replacing the `1` for complex fields by `0`
---- and then adding `1`s for all the sub-fields (and their sub-fields etc)
---- Recurses until all complex fields are replaced by their children and no more
---- complex fields remain
+--- Fill out the bitset string replacing with `1`s all the sub-fields of complex fields
 ----------------------------------------------
 --- @param request_id number the request_id to fill out the bitset for
 --- @param bitset_str string the bitset string to fill out
+
 function FieldRegistry:fillOutIndexes(request_id, bitset_str)
     local bit_count = #bitset_str
+    local result = {}
 
-    -- loop over bits
+    -- Local recursive function to count all fields and subfields
+    local function subFieldCount(field)
+        if not field or not field.sub_fields or #field.sub_fields == 0 then
+            return 1
+        end
+
+        local total = 1  -- Count the field itself
+        for _, sub_field in ipairs(field.sub_fields) do
+            total = total + subFieldCount(sub_field)
+        end
+        return total
+    end
+
+    -- Convert to array for easier manipulation (MSB first)
+    for i = 1, bit_count do
+        result[i] = (bitset_str:sub(i, i) == "1")
+    end
+
+    -- Process each bit position
     for index = 0, bit_count - 1 do
-        local bit = bitset_str:sub(bit_count - index, bit_count - index)
-        if bit == "1" then
+        local bit_pos = bit_count - index  -- Convert to 1-based MSB position
+
+        if result[bit_pos] then  -- If bit is set
             local field = FieldRegistry:getIndexed(request_id, index)
             if isComplexType(field.type_code) then
-                -- set all children to `1`
-                for i = index + 1, index + #field.sub_fields do
-                    -- Check if we need to grow the string
-                    if i >= #bitset_str then
-                        -- Prepend "1" bits for positions beyond current length
-                        local bits_to_add = i - #bitset_str + 1
-                        bitset_str = string.rep("1", bits_to_add) .. bitset_str
-                    else
-                        -- Set existing position to "1"
-                        local pos = #bitset_str - i + 1
-                        bitset_str = bitset_str:sub(1, pos - 1) .. "1" .. bitset_str:sub(pos + 1)
+                -- Calculate total subfield count for this complex field
+                local total_subfields = subFieldCount(field) - 1  -- Subtract 1 to exclude the parent field itself
+
+                -- Set all child bits based on actual subfield count
+                for child_offset = 1, total_subfields do
+                    local child_index = index + child_offset
+                    local child_bit_pos = bit_count - child_index
+                    if child_bit_pos >= 1 then
+                        result[child_bit_pos] = true
                     end
                 end
-
-                -- Update bit_count for next iteration
-                bit_count = #bitset_str
             end
         end
     end
-    return bitset_str
-end
 
-----------------------------------------------
+    -- Convert back to string
+    local filled_str = ""
+    for i = 1, bit_count do
+        filled_str = filled_str .. (result[i] and "1" or "0")
+    end
+
+    return filled_str
+end----------------------------------------------
 --- Get a field by depth-first index within an request_id
 ----------------------------------------------
 --- @param request_id number the request_id to search in
@@ -733,6 +752,27 @@ function FieldRegistry:getIndexed(request_id, index)
     else
         return nil
     end
+end
+
+function FieldRegistry:getFullBitSet(request_id)
+    local root_field = self.roots[request_id]
+
+    if not root_field then
+        return nil
+    end
+
+    local function depthFirstTraverse(field)
+        local bitset_str = "1"
+
+        -- traverse the next field if there are any
+        for _, sub_field in ipairs(field.sub_fields) do
+            bitset_str = bitset_str .. depthFirstTraverse(sub_field)
+        end
+
+        return bitset_str
+    end
+
+    return depthFirstTraverse(root_field)
 end
 
 --- Get a field by depth-first index within an request_id
@@ -1111,6 +1151,7 @@ function getDataForType(buf, is_big_endian, type_code)
     -- only for bool, int, float, and string scalars
     local value = ""
     local size = 1
+    if not buf or buf:len() == 0 then return end
 
     if isStringType(type_code) then
         local remaining_buf
@@ -1591,15 +1632,21 @@ function pruneUncommonRoots(trees, field_path, last_field_path)
     -- prune back all parent trees that are different
     local common_len = math.min( #field_path, #last_field_path)
     if #trees > 1 and  #last_field_path > 1 then
-        for common_tree_pos = 2, common_len do
-            local last_field_info = last_field_path[common_tree_pos]
-            local current_field_info = field_path[common_tree_pos]
-            if last_field_info.name ~= current_field_info.name then
-                last_common_pos = common_tree_pos-1
-                for _ = #trees, common_tree_pos, -1 do
-                    -- prune back old trees
-                    table.remove(trees)
-                    break
+        for tree_pos = 2, #trees do
+            if tree_pos > #field_path then
+                -- these are bigger than the new file path so remove them
+                table.remove(trees)
+                last_common_pos = tree_pos -1
+            else
+                local last_field_info = last_field_path[tree_pos]
+                local current_field_info = field_path[tree_pos]
+                if last_field_info.name ~= current_field_info.name then
+                    last_common_pos = tree_pos -1
+                    for _ = #trees, tree_pos, -1 do
+                        -- prune back old trees
+                        table.remove(trees)
+                        break
+                    end
                 end
             end
         end
@@ -1621,83 +1668,92 @@ function addRequiredRoot(buf, trees, current_field_pos, label)
 end
 
 function decodePVField(buf, root_tree, is_big_endian, request_id, bitset_str)
-    if bitset_str then
-        local root_field = FieldRegistry:getRootField(request_id)
-        local bit_count = #bitset_str
-        local last_common_pos = 1
+    if not bitset_str or #bitset_str == 0 then
+        bitset_str = FieldRegistry:getFullBitSet(request_id)
+        root_tree:add(buf, string.format("Effective: %s", bitset_str))
+    end
 
-        local last_field_path
+    local root_field = FieldRegistry:getRootField(request_id)
+    local bit_count = #bitset_str
+    local last_common_pos = 1
 
-        -- initialise the trees list.  The list contains the current hierarchy
-        -- where new data nodes need to be attached
-        -- simple data nodes are attached directly to the root_tree,
-        -- complex data nodes are attached under a value node of the complex type
-        local trees = { }
-        if isComplexType(root_field.type_code) then
-            local label = formatField(root_field.type_code, "value", root_field.type)
-            trees = { root_tree:add(buf, label) }
-        else
-            trees = { root_tree }
-        end
+    local last_field_path
 
-        -- go through the bits in the bitset_str and for every set bit, display a field or tree node
-        for field_index = 0, bit_count -1 do
-            -- if we should display something here
-            if bitset_str:sub(bit_count- field_index, bit_count- field_index) == "1" then
-                -- get the field path for the field to display
-                local field_path = FieldRegistry:getIndexedField(request_id, field_index)
+    -- initialise the trees list.  The list contains the current hierarchy
+    -- where new data nodes need to be attached
+    -- simple data nodes are attached directly to the root_tree,
+    -- complex data nodes are attached under a value node of the complex type
+    local trees = { }
+    if isComplexType(root_field.type_code) then
+        local label = formatField(root_field.type_code, "value", root_field.type)
+        trees = { root_tree:add(buf, label) }
+    else
+        trees = { root_tree }
+    end
 
-                local field_path_len = #field_path
-                local field_info = field_path[field_path_len]
+    -- go through the bits in the bitset_str and for every set bit, display a field or tree node
+    for field_index = 0, bit_count -1 do
+        -- if we should display something here
+        if bitset_str:sub(bit_count- field_index, bit_count- field_index) == "1" then
+            -- get the field path for the field to display
+            local field_path = FieldRegistry:getIndexedField(request_id, field_index)
 
-                if field_info then
-                    trees, last_common_pos = pruneUncommonRoots(trees, field_path, last_field_path)
+            local field_path_len = #field_path
+            local field_info = field_path[field_path_len]
 
-                    -- add all new complex fields
-                    for current_field_pos = #trees, field_path_len do
-                        local new_field_info = field_path[current_field_pos]
-                        if new_field_info then
-                            local label = formatField(new_field_info.type_code, new_field_info.name, new_field_info.type)
-                            if isComplexType(new_field_info.type_code) then
-                                addRequiredRoot(buf, trees, current_field_pos, label)
-                            else
-                                -- if this is a leaf then dangle off current tree
-                                if trees[#trees] then
-                                    buf = displayDataForType(buf, is_big_endian, field_info.type_code, trees[#trees], label, field_info.len)
-                                    break
-                                end
+            if field_info and field_path_len and field_path_len > 0 then
+                trees, last_common_pos = pruneUncommonRoots(trees, field_path, last_field_path)
+                local parent
+                if field_path_len < 2 then parent = "value" else parent = field_path[field_path_len-1].name or "value" end
+                print("Tree depth: " .. #trees .. " of " .. field_path_len .. ", field: " .. parent .. "." ..  field_info.name or "value")
+
+                -- add all new complex fields
+                for current_field_pos = #trees, field_path_len do
+                    local new_field_info = field_path[current_field_pos]
+                    if new_field_info then
+                        local label = formatField(new_field_info.type_code, new_field_info.name, new_field_info.type)
+                        if isComplexType(new_field_info.type_code) then
+                            addRequiredRoot(buf, trees, current_field_pos, label)
+                        else
+                            -- if this is a leaf then dangle off current tree
+                            if trees[#trees] then
+                                buf = displayDataForType(buf, is_big_endian, field_info.type_code, trees[#trees], label, field_info.len)
+                                break
                             end
                         end
                     end
                 end
-                last_field_path = field_path
             end
+            last_field_path = field_path
         end
-
-        -- display fields
     end
 end
 
--- Parse PVData
+----------------------------------------------
+--- pvaDecodePVData: decode the given message body into the given packet and root tree node
+--- Use the given bitset to select which fields to display
+--- The bitset sometimes does not contain all the field set for complex types with sub-fields
+--- so we expand the bitset to include all the fields using FieldRegistry:fillOutIndexes
+--- The bitset is then used to decode the fields using decodePVField
+----------------------------------------------
+--- @param buf: the buffer to decode from
+--- @param tree: the tree node to decode into
+--- @param is_big_endian is the byte stream big endian
+--- @param request_id: the request id
+--- @param bitset: the bitset to decode
 function pvaDecodePVData(buf, tree, is_big_endian, request_id, bitset)
-    local bitset_str
+    local bitset_str = ""
     if bitset then
         bitset_str = bufToBinary(bitset)
-        tree:add(bitset, string.format("Changed BitSet (%d bytes): %s", bitset:len(), bitset_str))
+        local bit_tree = tree:add(bitset, string.format("Changed BitSet (%d bytes): %s", bitset:len(), bitset_str))
+        local original_len = #bitset_str
+        bitset_str = FieldRegistry:fillOutIndexes(request_id, bitset_str)
+        local padding_len = 13 - (#bitset_str - original_len)
+        local padding = string.rep(" ", math.max(0, padding_len))
+        bit_tree:add(bitset, string.format("Effective: %s%s", padding, bitset_str))
     end
 
-    bitset_str = FieldRegistry:fillOutIndexes(request_id, bitset_str)
-    tree:add(bitset, string.format("Effective Bits (%d bytes): %s", bitset:len(), bitset_str))
     decodePVField(buf, tree, is_big_endian, request_id, bitset_str)
-end
-
--- Format field type for display
-function formatFieldType(field)
-    if not field or not field.type_code then
-        return "unknown"
-    end
-
-    return string.format("0x%02x: %s", field.type_code, field.type or "unknown")
 end
 
 ----------------------------
@@ -1760,6 +1816,7 @@ end
 
 ----------------------------------------------
 -- pvaServerBeaconDecoder: decode the given message body into the given packet and root tree node
+----------------------------------------------
 -- @param buf: the buffer to decode from
 -- @param pkt: the packet to decode into
 -- @param tree: the tree node to decode into
@@ -1785,6 +1842,7 @@ end
 
 ----------------------------------------------
 -- pvaServerSearchResponseDecoder: decode the given message body into the given packet and root tree node
+----------------------------------------------
 -- @param buf: the buffer to decode from
 -- @param pkt: the packet to decode into
 -- @param tree: the tree node to decode into
@@ -1822,6 +1880,7 @@ end
 
 ----------------------------------------------
 -- pvaClientValidateDecoder: decode the given message body into the given packet and root tree node
+----------------------------------------------
 -- @param buf: the buffer to decode from
 -- @param pkt: the packet to decode into
 -- @param tree: the tree node to decode into
@@ -1935,6 +1994,7 @@ end
 
 ----------------------------------------------
 -- pvsServerValidateDecoder: decode the given message body into the given packet and root tree node
+----------------------------------------------
 -- @param buf: the buffer to decode from
 -- @param pkt: the packet to decode into
 -- @param tree: the tree node to decode into
@@ -2032,6 +2092,7 @@ end
 
 ----------------------------------------------
 -- pvaClientCreateChannelDecoder: decode the given message body into the given packet and root tree node
+----------------------------------------------
 -- @param buf: the buffer to decode from
 -- @param pkt: the packet to decode into
 -- @param tree: the tree node to decode into
@@ -2059,6 +2120,7 @@ end
 
 ----------------------------------------------
 -- pvaServerCreateChannelDecoder: decode the given message body into the given packet and root tree node
+----------------------------------------------
 -- @param buf: the buffer to decode from
 -- @param pkt: the packet to decode into
 -- @param tree: the tree node to decode into
@@ -2075,6 +2137,7 @@ end
 
 ----------------------------------------------
 -- pvaDestroyChannelDecoder: decode the given message body into the given packet and root tree node
+----------------------------------------------
 -- @param buf: the buffer to decode from
 -- @param pkt: the packet to decode into
 -- @param tree: the tree node to decode into
@@ -2091,6 +2154,7 @@ end
 
 ----------------------------------------------
 -- pvaClientDestroyDecoder: decode the given message body into the given packet and root tree node
+----------------------------------------------
 -- @param buf: the buffer to decode from
 -- @param pkt: the packet to decode into
 -- @param tree: the tree node to decode into
@@ -2108,6 +2172,7 @@ end
 
 ----------------------------------------------
 -- pvaGenericClientOpDecoder: decode the given message body into the given packet and root tree node
+----------------------------------------------
 -- @param buf: the buffer to decode from
 -- @param pkt: the packet to decode into
 -- @param tree: the tree node to decode into
@@ -2144,6 +2209,7 @@ end
 
 ----------------------------------------------
 -- pvaGenericServerOpDecoder: decode the given message body into the given packet and root tree node
+----------------------------------------------
 -- @param buf: the buffer to decode from
 -- @param pkt: the packet to decode into
 -- @param tree: the tree node to decode into
@@ -2212,6 +2278,7 @@ local client_cmd_handler = {
 
 ----------------------------------------------
 -- decode: decode the given buffer into the given packet and root tree node
+----------------------------------------------
 -- @param buf: the buffer to decode from
 -- @param pkt: the packet to decode into
 -- @param root: the root tree node to decode into
@@ -2336,6 +2403,7 @@ end
 ----------------------------------------------
 -- dissector: the dissector function
 -- Implementation of the PVA disector
+----------------------------------------------
 -- @param buf: the buffer to decode from
 -- @param pkt: the packet to decode into
 -- @param root: the root tree node to decode into
