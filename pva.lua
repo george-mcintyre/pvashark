@@ -836,31 +836,40 @@ function FieldRegistry:getIndexedField(request_id, index)
 end
 
 ----------------------------------------------
---- bufToBinary: get an binary string of digits from buffer
+--- bufToBinary: get an binary string of digits from buffer.
+--- Bits are serialised least-significant bit first within each byte
+--- and bytes are sent in ascending order.
+---
+---  input bytes:              0         1          2          3
+---  input bit positions: [01234567] [89012345] [67890123] [45678901]
+---  maps to output bits: "10987654" "32109876" "54321098" "76543210"
+---  maps to bytes      :     3          2          1          0
+---
+--- This means that the bit order for each byte needs to be reversed
+--- then each successive byte-set of reversed bits needs to be prepended
+--- to the previous
 ----------------------------------------------
 --- @param buf table to read the bytes from
+--- @return string the sequence of 0's and 1's that make up the full and ordered bit string
 ----------------------------------------------
 function bufToBinary(buf)
     if not buf or buf:len() == 0 then
         return ""
     end
 
-    local result = {}
+    local binary_bytes = ""
     local bytes = buf:bytes()
 
     for i = 0, bytes:len() - 1 do
         local byte = bytes:get_index(i)
-        local binary_byte = ""
 
         -- Convert each byte to 8-bit binary
         for bit = 7, 0, -1 do
-            binary_byte = binary_byte .. ((byte >> bit) & 1)
+            binary_bytes =  "" .. ((byte >> bit) & 1) .. binary_bytes
         end
-
-        result[#result + 1] = binary_byte
     end
 
-    return table.concat(result)
+    return binary_bytes
 end
 
 ----------------------------------------------
@@ -1036,7 +1045,7 @@ local function decodeSize(buf, is_big_endian)
     -- 1. fast path: single‑byte size 0‑254
     local first = buf:range(0,1):uint()      -- one byte
     if first < 0xFF then
-        if buf:len() > 1 then
+        if buf:len() > 0 then
             return first, buf:range(1)       -- drop 1 byte
         else
             return first, nil                -- nothing remains after dropping a byte
@@ -1094,7 +1103,7 @@ local function pvaDecodeTypeCode(buf, tree)
         return nil, nil
     end
 
-    if buf:len() > 1 then
+    if buf:len() > 0 then
         buf = buf:range(1)
     else
         buf = nil
@@ -1208,28 +1217,34 @@ function displayDataForType(buf, is_big_endian, type_code, tree, label, len)
     if not isArrayType(type_code) then
         -- scalar
         value, size = getDataForType(buf, is_big_endian, type_code)
-        tree:add(buf(0, size), string.format(label .. ": %s", value))
+        if not buf then
+            tree:add(string.format(label .. ": %s", value))
+        else
+            tree:add(buf(0, size), string.format(label .. ": %s", value))
+        end
     else
         -- get count
+        local ar_buf
         if isVariableArrayType(type_code) or isBoundedArrayType(type_code) then
             -- read len
-            local ar_buf
             len, ar_buf = decodeSize(buf, is_big_endian)
         end
+
+        local ar_tree = tree:add(buf(0, 1), label)
 
         -- loop over data
         for i = 0, len - 1 do
             -- display
             local el_size
-            local el_label = label .. "[" .. i .. "]"
+            local el_label = "[" .. i .. "]"
             value, el_size = getDataForType(ar_buf, is_big_endian, type_code)
-            tree:add(ar_buf(0, size), string.format(el_label .. ": %s", value))
-            ar_buf:range(el_size)
+            ar_tree:add(ar_buf(0, el_size), string.format(el_label .. ": %s", value))
+            ar_buf = ar_buf:range(el_size)
             size = size + el_size
         end
     end
 
-    return buf:range(size)
+    return buf and buf:len() > size and buf:range(size) or nil
 end
 
 ----------------------------------------------
@@ -1593,7 +1608,6 @@ function displayFieldPath(buf, root_tree, is_big_endian, field_path, last_field_
             current.tree = last.tree
 
             if last.name ~= current.name then
-                print(string.format("last name: %s != new name: %s", last.name, current.name ))
                 -- we diverged
                 pos = i
                 current_tree = last.tree
@@ -1661,8 +1675,11 @@ function addRequiredRoot(buf, trees, current_field_pos, label)
     if trees_len ~= current_field_pos then
         local current_tree = trees[trees_len]
         if current_tree then
-            local new_tree = current_tree:add(buf(0,1), label)
-            table.insert(trees, new_tree)
+            if not buf then
+                table.insert(trees, current_tree:add(label))
+            else
+                table.insert(trees, current_tree:add(buf(0,1), label))
+            end
         end
     end
 end
@@ -1705,7 +1722,6 @@ function decodePVField(buf, root_tree, is_big_endian, request_id, bitset_str)
                 trees, last_common_pos = pruneUncommonRoots(trees, field_path, last_field_path)
                 local parent
                 if field_path_len < 2 then parent = "value" else parent = field_path[field_path_len-1].name or "value" end
-                print("Tree depth: " .. #trees .. " of " .. field_path_len .. ", field: " .. parent .. "." ..  field_info.name or "value")
 
                 -- add all new complex fields
                 for current_field_pos = #trees, field_path_len do

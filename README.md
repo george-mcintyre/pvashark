@@ -1270,9 +1270,14 @@ Arrays are fundamental to PVA protocol design. All basic types can be arrays:
 
 ```text
                       i:   3         2         1         0
-                      i:  10987654321098765432109876543210
-Changed BitSet (4 bytes): 10000001111110110011001000011110
-  Effective:              11111111111111110011001000111110
+                      i:  10987654 32109876 54321098 76543210
+Changed BitSet (4 bytes): 10000001 11111011 00110010 00011110
+Changed BitSet (4 bytes): 01111000 01001100 11011111 10000001
+  Effective:              11111111 11111111 00110010 00111110
+  Effective:              11111111 11111111 11111111 11111111
+
+01111000001001100110111111000001
+01111000010011001101111110000001
 
  i A E 
 00 0 0  value (0x80: NTScalar) → 1
@@ -1287,10 +1292,10 @@ Changed BitSet (4 bytes): 10000001111110110011001000011110
 09 1 1  │  └─ userTag (0x22: int32_t)
 10 0 0  ├─ display (0x80: struct) → 4
 11 0 0  │  ├─ limitLow (0x43: double)
-12 1 0  │  ├─ limitHigh (0x43: double)
+12 1 1  │  ├─ limitHigh (0x43: double)
 13 1 1  │  ├─ description (0x60: string)
-14 0 1  │  ├─ units (0x60: string)
-15 0 1  │  ├─ precision (0x22: int32_t)
+14 0 0  │  ├─ units (0x60: string)
+15 0 0  │  ├─ precision (0x22: int32_t)
 16 1 1  │  └─ form (0x80: enum_t) → 5
 17 1 1  │     ├─ index (0x22: int32_t)         <-- All perfect up to here
 18 0 1  │     └─ choices (0x68: string[]):
