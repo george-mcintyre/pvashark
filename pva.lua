@@ -674,9 +674,9 @@ function FieldRegistry:fillOutIndexes(request_id, bitset_str)
     end
 
     -- Local function to count all fields and subfields
-    ---@param request_id number the request id to cound the fields for
-    local function getFullCount(request_id)
-        return subFieldCount(FieldRegistry:getRootField(request_id))
+    ---@param id number the request id to count the fields for
+    local function getFullCount(id)
+        return subFieldCount(FieldRegistry:getRootField(id))
     end
 
     local bit_count = #bitset_str
@@ -730,7 +730,7 @@ end----------------------------------------------
 ----------------------------------------------
 --- @param request_id number the request_id to search in
 --- @param index number the zero-based index of the field to retrieve
---- @return field the found Field
+--- @return table field the found Field
 function FieldRegistry:getIndexed(request_id, index)
     local root_field = self.roots[request_id]
 
@@ -910,114 +910,6 @@ local function getUint(buf, is_big_endian)
         else
             return buf:le_uint64():tonumber()
         end
-    end
-end
-
-----------------------------------------------
---- getInt: get an integer with the correct byte order
-----------------------------------------------
---- @param buf table to read the int from
---- @param is_big_endian boolean flag to indicate the bigendian-ness
---- @return number the integer
-----------------------------------------------
-local function getInt(buf, is_big_endian)
-    if buf:len() == 1 then
-        return buf:byte()
-    end
-    if is_big_endian == nil or is_big_endian then
-        if buf:len() == 2 then
-            return buf:int()
-        else
-            return buf:int64():tonumber()
-        end
-    else
-        if buf:len() == 2 then
-            return buf:le_int()
-        else
-            return buf:le_int64():tonumber()
-        end
-    end
-end
-
-----------------------------------------------
---- getUintForDisplay: get an unsigned integer formatted for display (avoiding .0 suffix)
-----------------------------------------------
---- @param buf table to read the uint from
---- @param is_big_endian boolean flag to indicate the bigendian-ness
---- @return string the unsigned integer formatted for display
-----------------------------------------------
-local function getUintForDisplay(buf, is_big_endian)
-    if buf:len() == 1 then
-        return tostring(buf:byte())
-    end
-    if is_big_endian == nil or is_big_endian then
-        if buf:len() == 2 then
-            return tostring(buf:uint())
-        else
-            return tostring(buf:uint64())
-        end
-    else
-        if buf:len() == 2 then
-            return tostring(buf:le_uint())
-        else
-            return tostring(buf:le_uint64())
-        end
-    end
-end
-
-----------------------------------------------
---- getIntForDisplay: get an integer formatted for display (avoiding .0 suffix)
-----------------------------------------------
---- @param buf table to read the int from
---- @param is_big_endian boolean flag to indicate the bigendian-ness
---- @return string the integer formatted for display
-----------------------------------------------
-local function getIntForDisplay(buf, is_big_endian)
-    if buf:len() == 1 then
-        return tostring(buf:byte())
-    end
-    if is_big_endian == nil or is_big_endian then
-        if buf:len() == 2 then
-            return tostring(buf:int())
-        else
-            return tostring(buf:int64())
-        end
-    else
-        if buf:len() == 2 then
-            return tostring(buf:le_int())
-        else
-            return tostring(buf:le_int64())
-        end
-    end
-end
-
-----------------------------------------------
---- getFloat: get a float with the correct byte order
-----------------------------------------------
---- @param buf table to read the float from
---- @param is_big_endian boolean flag to indicate the bigendian-ness
---- @return number the float
-----------------------------------------------
-local function getFloat(buf, is_big_endian)
-    if is_big_endian == nil or is_big_endian then
-        return buf:float()
-    else
-        return buf:le_float()
-    end
-end
-
-----------------------------------------------
---- getDouble: get a double with the correct byte order
-----------------------------------------------
---- @param buf table to read the double from
---- @param is_big_endian boolean flag to indicate the bigendian-ness
---- @return number the double
-----------------------------------------------
-local function getDouble(buf, is_big_endian)
-    if is_big_endian == nil or is_big_endian then
-        return buf:float()  -- Wireshark's float() method handles both 32-bit and 64-bit
-    else
-        return buf:le_float()  -- Wireshark's le_float() method handles both 32-bit and 64-bit
     end
 end
 
@@ -1478,7 +1370,7 @@ end
 ----------------------------------------------
 --- @param buf: the buffer to decode from
 --- @param is_big_endian: true if the buffer is big endian
---- @return the remaining buffer
+--- @return table the remaining buffer
 ----------------------------------------------
 local function skipNextElement(buf, is_big_endian)
     local len, remaining_buf = decodeSize(buf, is_big_endian)
@@ -1769,7 +1661,7 @@ end
 ----------------------------------------------
 --- @param buf: the buffer to decode from
 --- @param tree: the tree node to decode into
---- @param is_big_endian is the byte stream big endian
+--- @param is_big_endian boolean is the byte stream big endian
 --- @param request_id: the request id
 --- @param bitset: the bitset to decode
 function pvaDecodePVData(buf, tree, is_big_endian, request_id, bitset)
