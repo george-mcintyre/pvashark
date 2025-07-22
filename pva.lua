@@ -143,10 +143,10 @@ local fbeacon_change    = ProtoField.uint16(    "pva.change",               "Bea
 
 local fvalid_bsize      = ProtoField.uint32(    "pva.qsize",                "Client Queue Size")
 local fvalid_isize      = ProtoField.uint16(    "pva.isize",                "Client Introspection registery size")
-local fvalid_qos        = ProtoField.uint16(    "pva.qos",                  "Client QoS",   base.HEX)
+local fvalid_qos        = ProtoField.uint16(    "pva.qos",                  "Client QoS",       base.HEX)
 local fvalid_method     = ProtoField.string(    "pva.method",               "AuthZ method")
-local fvalid_azflg      = ProtoField.uint8 (    "pva.authzflag",            "AuthZ Flags",  base.HEX)
-local fvalid_azcnt      = ProtoField.uint8 (    "pva.authzcnt",             "AuthZ Elem‑cnt", base.DEC)
+local fvalid_azflg      = ProtoField.uint8 (    "pva.authzflag",            "AuthZ Flags",      base.HEX)
+local fvalid_azcnt      = ProtoField.uint8 (    "pva.authzcnt",             "AuthZ Elem‑cnt",   base.DEC)
 
 -- For AUTHZ_REQUEST
 
@@ -167,9 +167,9 @@ local fauthz_response   = ProtoField.string(    "pva.authzresponse",        "Aut
 local fsearch_seq       = ProtoField.uint32(    "pva.seq",                  "Search Sequence #")
 local fsearch_addr      = ProtoField.bytes(     "pva.addr",                 "Address")
 local fsearch_port      = ProtoField.uint16(    "pva.port",                 "Port")
-local fsearch_mask      = ProtoField.uint8(     "pva.mask",                 "Mask",         base.HEX)
-local fsearch_mask_repl = ProtoField.uint8(     "pva.reply",                "Reply",        base.HEX, {[0]="Optional",[1]="Required"}, 0x01)
-local fsearch_mask_bcast= ProtoField.uint8(     "pva.ucast",                "Reply",        base.HEX, {[0]="Broadcast",[1]="Unicast"}, 0x80)
+local fsearch_mask      = ProtoField.uint8(     "pva.mask",                 "Mask",             base.HEX)
+local fsearch_mask_repl = ProtoField.uint8(     "pva.reply",                "Reply",            base.HEX, {[0]="Optional",[1]="Required"}, 0x01)
+local fsearch_mask_bcast= ProtoField.uint8(     "pva.ucast",                "Reply",            base.HEX, {[0]="Broadcast",[1]="Unicast"}, 0x80)
 local fsearch_proto     = ProtoField.string(    "pva.proto",                "Transport Protocol")
 local fsearch_count     = ProtoField.uint16(    "pva.count",                "PV Count")
 local fsearch_cid       = ProtoField.uint32(    "pva.cid",                  "CID")
@@ -237,36 +237,40 @@ local TYPE_CODE_RAW = 0xDF;            -- FieldDesc
 --- otherwise it is a simple type that is determined by the following functions
 ---
 
+-----------------------------------------------
 --- A field can be null
 --- `TYPE_CODE_NULL`
----
+-----------------------------------------------
 --- @param type_code number the field type code
 --- @return boolean true if the field is a null
 function isNull(type_code)
     return type_code == TYPE_CODE_NULL
 end
 
+-----------------------------------------------
 --- A field may be determined by providing the ID of the field that is looked up in the Field Registry
 --- `TYPE_CODE_ONLY_ID` <id: uint32>
----
+-----------------------------------------------
 --- @param type_code number the field type code
 --- @return boolean true if the field is determined by only an id
 function isOnlyId(type_code)
     return type_code == TYPE_CODE_ONLY_ID
 end
 
+-----------------------------------------------
 --- A may be declared with an ID and have that declaration stored in the Field Registry for later lookup
 --- `TYPE_CODE_FULL_WITH_ID` <id: uint32> <fieldDesc: uint8> ...
----
+-----------------------------------------------
 --- @param type_code number the field type code
 --- @return boolean true if the field is determined by providing a declaration and id to store it against
 function isFullWithId(type_code)
     return type_code == TYPE_CODE_FULL_WITH_ID
 end
 
+-----------------------------------------------
 --- A field may be declared with and ID and a tag and then stored in the Field Registry for later lookup
 --- `TYPE_CODE_FULL_AND_TAGGED_WITH_ID` <id: uint32> <tag: uint16> <fieldDesc: uint8> ...
----
+-----------------------------------------------
 --- @param type_code number the field type code
 --- @return boolean true if the field is determined by providing a declaration, and and id, and tag to store it against
 function isFullTaggedWithId(type_code)
@@ -274,11 +278,12 @@ function isFullTaggedWithId(type_code)
 end
 
 
+-----------------------------------------------
 --- Alternatively the field can simply be declared directly and not stored in the Field Registry
 --- This includes simple types and complex types
 --- The type code is the fieldDesc!
 --- <fieldDesc: uint8> ...
----
+-----------------------------------------------
 --- @param type_code number the field type code
 --- @return boolean true if the field is a full field
 function isFull(type_code)
@@ -298,35 +303,45 @@ end
 --- 4. String
 --- 5. Complex
 
+-----------------------------------------------
 --- Helper function to determine if the field is a boolean type
+-----------------------------------------------
 --- @param type_code number the field type code
 --- @return boolean true if the field is a boolean type
 function isBoolType(type_code)
     return bit.band(type_code, 0xE0) == 0x00
 end
 
+-----------------------------------------------
 --- Helper function to determine if the field is an integer type
+-----------------------------------------------
 --- @param type_code number the field type code
 --- @return boolean true if the field is an integer type
 function isIntType(type_code)
     return bit.band(type_code, 0xE0) == 0x20
 end
 
+-----------------------------------------------
 --- Helper function to determine if the field is a float type
+-----------------------------------------------
 --- @param type_code number the field type code
 --- @return boolean true if the field is a float type
 function isFloatType(type_code)
     return bit.band(type_code, 0xE0) == 0x40
 end
 
+-----------------------------------------------
 --- Helper function to determine if the field is a string type
+-----------------------------------------------
 --- @param type_code number the field type code
 --- @return boolean true if the field is a string type
 function isStringType(type_code)
     return bit.band(type_code, 0xE0) == 0x60
 end
 
+-----------------------------------------------
 --- Helper function to determine if the field is a complex type
+-----------------------------------------------
 --- @param type_code number the field type code
 --- @return boolean true if the field is a complex type
 function isComplexType(type_code)
@@ -342,28 +357,36 @@ end
 --- 2. Bounded Array:  The maximum extent of the array is specified in the declaration, and the actual extent is provided each time the field is used with data
 --- 3. Fixed Array:    The length of the array is specified in the declaration and the extent is fixed
 
+-----------------------------------------------
 --- Helper function to determine if the field is an array
+-----------------------------------------------
 --- @param type_code number the field type code
 --- @return boolean true if the field is an array
 function isArrayType(type_code)
     return bit.band(type_code, 0x18) ~= 0
 end
 
+-----------------------------------------------
 --- Helper function to determine if the field is a variable array
+-----------------------------------------------
 --- @param type_code number the field type code
 --- @return boolean true if the field is a variable array
 function isVariableArrayType(type_code)
     return bit.band(type_code, 0x18) == 0x08
 end
 
+-----------------------------------------------
 --- Helper function to determine if the field is a bounded array
+-----------------------------------------------
 --- @param type_code number the field type code
 --- @return boolean true if the field is a bounded array
 function isBoundedArrayType(type_code)
     return bit.band(type_code, 0x18) == 0x10
 end
 
+-----------------------------------------------
 --- Helper function to determine if the field is a fixed array
+-----------------------------------------------
 --- @param type_code number the field type code
 --- @return boolean true if the field is a fixed array
 function isFixedArrayType(type_code)
@@ -388,70 +411,69 @@ end
 ---
 --- The following functions can be used to determine the kind of the integer
 
+-----------------------------------------------
 --- getIntLen: get the length of the integer type
+-----------------------------------------------
 --- @param type_code number the field type code
 --- @return number the length of the integer type
 function getIntLen(type_code)
     local b = bit.band(type_code, 0x03)  -- Extract bits 1-0 (not 2-1!)
-    if b == 0x00 then
-        return 8   -- int8_t or uint8_t
-    elseif b == 0x01 then
-        return 16  -- int16_t or uint16_t
-    elseif b == 0x02 then
-        return 32  -- int32_t or uint32_t
-    else -- b == 0x03
-        return 64  -- int64_t or uint64_t
-    end
+    return b == 0x00 and 8 or b == 0x01 and 16 or b == 0x02 and 32 or 64
 end
 
 
+-----------------------------------------------
+--- isIntSigned: determine if the integer type is signed
+-----------------------------------------------
+--- @param type_code number the field type code
+--- @return boolean true if the integer type is signed
 function isIntSigned(type_code)
     return bit.band(type_code, 0x04) == 0
 end
 
+
+-----------------------------------------------
 --- Helper function to get the name of the integer type
+-----------------------------------------------
 --- @param type_code number the field type code
 --- @return string the name of the integer type
 function getIntName(type_code)
-    if isIntSigned(type_code) then
-        return "int" .. getIntLen(type_code) .. "_t"
-    else
-        return "uint" .. getIntLen(type_code) .. "_t"
-    end
+    local b = isIntSigned(type_code) and "int" or "uint"
+    return b .. getIntLen(type_code) .. "_t"
 end
 
+-----------------------------------------------
 --- Float Types
----
+-----------------------------------------------
 --- There are 2 variants of float types:
 --- 1. 32-bit float             : <4 bytes>
 --- 2. 64-bit double            : <8 bytes>
 ---
 --- The following functions can be used to determine the kind of the float
 
+-----------------------------------------------
 --- Helper function to get the length of the float type
+-----------------------------------------------
 --- @param type_code number the field type code
 --- @return number the length of the float type
 function getFloatLen(type_code)
-    if bit.band(type_code, 0x07) == 2 then
-        return 32
-    else
-        return 64
-    end
+    local b = bit.band(type_code, 0x07)
+    return b == 0x02 and 32 or 64
 end
 
+-----------------------------------------------
 --- Helper function to get the name of the float type
+-----------------------------------------------
 --- @param type_code number the field type code
 --- @return string the name of the float type
 function getFloatName(type_code)
-    if bit.band(type_code, 0x07) == 2 then
-        return "float"
-    else
-        return "double"
-    end
+    local b = bit.band(type_code, 0x07)
+    return b == 0x02 and "float" or "double"
 end
 
+-----------------------------------------------
 --- Complex Types
----
+-----------------------------------------------
 --- All complex types start with a name (sometimes referred to as a type id)
 --- The string is defined using the variable length pvData size encoding of either 1, 5, or 13 bytes.
 --- So all complex types start with: <pvData-size: 1, 5, or 13 bytes> <pvData-string: length> ...
@@ -464,20 +486,14 @@ end
 ---
 --- The following functions can be used to determine the kind of the complex type
 
+-----------------------------------------------
 --- Helper function to get the name of the complex type
+-----------------------------------------------
 --- @param type_code number the field type code
 --- @return string the name of the complex type
 function getComplexName(type_code)
     local b = bit.band(type_code, 0x07)
-    if b == 0x00 then
-        return "struct"
-    elseif b == 0x01 then
-        return "union"
-    elseif b == 0x02 then
-        return "any"
-    else
-        return "fixed_string"
-    end
+    return b == 0x00 and "struct" or b == 0x01 and "union" or b == 0x02 and "any" or "fixed_string"
 end
 
 -----------------------------------------------
@@ -486,41 +502,29 @@ end
 --- The following functions can be used to determine the type of the field, or
 --- format the fields, irrespective of the kind of field
 
+-----------------------------------------------
 --- getTypeName
+-----------------------------------------------
 --- @param type_code number the field type code
 --- @return string the type name of the field
 function getTypeName(type_code)
-    if isBoolType(type_code) then
-        return "bool"
-    elseif isIntType(type_code) then
-        return getIntName(type_code)
-    elseif isFloatType(type_code) then
-        return getFloatName(type_code)
-    elseif isStringType(type_code) then
-        return "string"
-    else
-        return getComplexName(type_code)
-    end
+    return isBoolType(type_code) and "bool" or isIntType(type_code) and getIntName(type_code) or isFloatType(type_code) and getFloatName(type_code) or isStringType(type_code) and "string" or getComplexName(type_code)
 end
 
+-----------------------------------------------
 --- Format field name and type for display in protocol tree
----
+-----------------------------------------------
 --- @param type_code number the field type code
 --- @param field_name string the name of the field, defaults to value if not specified
 --- @param type_name string the optional "Type ID" or Normative Type string to use for complex types
 --- @return string the formatted field name and type
 function formatField(type_code, field_name, type_name)
-    local a = ""
-    if isArrayType(type_code) then
-        a="[]"
-    end
+    local a = isArrayType(type_code) and "[]" or ""
 
     field_name = field_name or "value"
     type_name = type_name or getTypeName(type_code)
     local nt = nt_types[type_name]
-    if nt then
-        type_name = nt
-    end
+    type_name = nt and nt or type_name
 
     return string.format("%s%s (0x%02X: %s%s)", field_name, a, type_code, type_name, a)
 end
@@ -532,26 +536,32 @@ end
 --- The Field Registry is used to store the fields for a request
 --- For each request there is at most one root field (the top level field)
 --- This can be a simple field or a complex field in which case there are sub-fields, also stored against the same request_id
----
+-----------------------------------------------
 --- @field roots table this is a map of roots keyed on request_id
 --- @field data table this is the map of Field-maps keyed on request_id, each sub-map is keyed on field_id
 local FieldRegistry = {}
 
+-----------------------------------------------
 --- Initialize the Field Registry
+-----------------------------------------------
 FieldRegistry.data = {}
 FieldRegistry.roots = {}
 
+-----------------------------------------------
 --- Get the root field for a request
+-----------------------------------------------
 --- @param request_id number the request_id to get the root field for
 --- @return table the root field for the request
 function FieldRegistry:getRootField(request_id)
     return self.roots[request_id]
 end
 
+-----------------------------------------------
 --- Create a new `Field`
 --- - If the `type` name is specified then it is used as the type name of this `Field`.
 --- - If `parent_field` is specified then the newly created `Field` is added as a child of the parent `Field`.
 ---   It is up to the caller to assure that the parent is of the appropriate type to accept children.
+-----------------------------------------------
 --- @param name string the field name
 --- @param type_code number the type code
 --- @param type string the string name to use as the type
@@ -581,8 +591,10 @@ function FieldRegistry:createField(name, type_code, type, len, parent_field)
     return field
 end
 
+-----------------------------------------------
 --- Create a new `Field` and add it to the `FieldRegistry` if `request_id` and `field_id` are specified
 --- - If `request_id` and  `field_id` are provided then new `Field` is added to the `FieldRegistry` .
+-----------------------------------------------
 --- @param name string the field name
 --- @param type_code number the type code
 --- @param type string the string name to use as the type
@@ -620,7 +632,6 @@ end
 --- @param request_id number the request_id to get the field for
 --- @param field_id number the field_id to get the field for
 --- @return table the field for the request_id and field_id
-----------------------------------------------
 function FieldRegistry:getField(request_id, field_id)
     return request_id and field_id and self.data and self.data[request_id] and self.data[request_id][field_id]
 end
@@ -630,7 +641,6 @@ end
 ----------------------------------------------
 --- @param field table the parent Field to get the sub-Fields of
 --- @return table the sub-fields of the given Field
-----------------------------------------------
 function FieldRegistry:getSubFields(field)
     return field.sub_fields
 end
@@ -640,7 +650,6 @@ end
 ----------------------------------------------
 --- @param request_id number the request_id to get the fields for
 --- @return table the fields of the given request_id
-----------------------------------------------
 function FieldRegistry:getFields(request_id)
     return self.data[request_id] or {}
 end
@@ -664,7 +673,9 @@ function FieldRegistry:fillOutIndexes(request_id, bitset_str)
         return total
     end
 
+    -----------------------------------------------
     -- Local function to count all fields and subfields
+    -----------------------------------------------
     ---@param id number the request id to count the fields for
     local function getFullCount(id)
         return subFieldCount(FieldRegistry:getRootField(id))
@@ -682,9 +693,7 @@ function FieldRegistry:fillOutIndexes(request_id, bitset_str)
     end
 
     -- Convert to array for easier manipulation (MSB first)
-    for i = 1, bit_count do
-        result[i] = (bitset_str:sub(i, i) == "1")
-    end
+    for i = 1, bit_count do result[i] = (bitset_str:sub(i, i) == "1") end
 
     -- Process each bit position
     for index = 0, bit_count - 1 do
@@ -711,12 +720,12 @@ function FieldRegistry:fillOutIndexes(request_id, bitset_str)
 
     -- Convert back to string
     local filled_str = ""
-    for i = 1, bit_count do
-        filled_str = filled_str .. (result[i] and "1" or "0")
-    end
+    for i = 1, bit_count do filled_str = filled_str .. (result[i] and "1" or "0") end
 
     return filled_str
-end----------------------------------------------
+end
+
+----------------------------------------------
 --- Get a field by depth-first index within an request_id
 ----------------------------------------------
 --- @param request_id number the request_id to search in
@@ -725,17 +734,13 @@ end----------------------------------------------
 function FieldRegistry:getIndexed(request_id, index)
     local root_field = self.roots[request_id]
 
-    if not root_field then
-        return nil
-    end
+    if not root_field then return nil end
 
     --- search from the given field down depth first, recursing when necessary
     --- @return table a List of Fields from the root to the found field
     --- @return number remaining indices space to search
     local function depthFirstTraverse(field, target_index)
-        if target_index == 0 then
-            return field, target_index
-        end
+        if target_index == 0 then return field, target_index end
 
         -- otherwise traverse the next field if there are any
         target_index = target_index - 1
@@ -760,12 +765,14 @@ function FieldRegistry:getIndexed(request_id, index)
     end
 end
 
+----------------------------------------------
+--- Get the full bit set for a request_id
+----------------------------------------------
+--- @param request_id number the request_id to get the full bit set for
+--- @return string the full bit set for the request_id
 function FieldRegistry:getFullBitSet(request_id)
     local root_field = self.roots[request_id]
-
-    if not root_field then
-        return nil
-    end
+    if not root_field then return nil end
 
     local function depthFirstTraverse(field)
         local bitset_str = "1"
@@ -781,6 +788,7 @@ function FieldRegistry:getFullBitSet(request_id)
     return depthFirstTraverse(root_field)
 end
 
+----------------------------------------------
 --- Get a field by depth-first index within an request_id
 --- - Starts at the root of a request_id and traverses the field graph depth first.
 --- - It indexes fields it finds from 0 (root)
@@ -791,10 +799,7 @@ end
 --- @return table a List of Fields from the root to the found field
 function FieldRegistry:getIndexedField(request_id, index)
     local root_field = self.roots[request_id]
-
-    if not root_field then
-        return nil
-    end
+    if not root_field then return nil end
 
     --- search from the given field down depth first, recursing when necessary
     --- @return table a List of Fields from the root to the found field
@@ -809,7 +814,6 @@ function FieldRegistry:getIndexedField(request_id, index)
 
         -- is this field the target field
         if target_index == 0 then
-            -- return the simple field info
             return { field_info }, target_index
         end
 
@@ -821,8 +825,6 @@ function FieldRegistry:getIndexedField(request_id, index)
             local sub_field_path
             sub_field_path, target_index = depthFirstTraverse(sub_field, target_index)
             if target_index == 0 and sub_field_path then
-                -- if we found the target at the sub field path then return success
-                -- by inserting this field info into the beginning of the found sub-field-path
                 table.insert(sub_field_path, 1, field_info)
                 return sub_field_path, target_index
             end
@@ -830,15 +832,10 @@ function FieldRegistry:getIndexedField(request_id, index)
 
         -- if there are no other fields then keep the same target_index and indicate not found
         return nil, target_index
-
     end
 
     local field_path, final_index = depthFirstTraverse(root_field, index)
-    if final_index == 0 then
-        return field_path
-    else
-        return nil
-    end
+    return final_index == 0 and field_path or nil
 end
 
 ----------------------------------------------
@@ -859,9 +856,7 @@ end
 --- @return string the sequence of 0's and 1's that make up the full and ordered bit string
 ----------------------------------------------
 function bufToBinary(buf)
-    if not buf or buf:len() == 0 then
-        return ""
-    end
+    if not buf or buf:len() == 0 then return "" end
 
     local binary_bytes = ""
     local bytes = buf:bytes()
@@ -886,22 +881,7 @@ end
 --- @return number the unsigned integer
 ----------------------------------------------
 local function getUint(buf, is_big_endian)
-    if buf:len() == 1 then
-        return buf:byte()
-    end
-    if is_big_endian == nil or is_big_endian then
-        if buf:len() == 2 then
-            return buf:uint()
-        else
-            return buf:uint64():tonumber()
-        end
-    else
-        if buf:len() == 2 then
-            return buf:le_uint()
-        else
-            return buf:le_uint64():tonumber()
-        end
-    end
+    return buf:len() == 1 and buf:byte() or (is_big_endian == nil or is_big_endian) and (buf:len() == 2 and buf:uint() or buf:uint64():tonumber()) or (buf:len() == 2 and buf:le_uint() or buf:le_uint64():tonumber())
 end
 
 ----------------------------------------------
@@ -942,13 +922,9 @@ local function decodeSize(buf, is_big_endian)
     if not buf or buf:len() < 1 then return buf, nil end
 
     -- 1. fast path: single‑byte size 0‑254
-    local first = buf:range(0,1):uint()      -- one byte
+    local first = buf:range(0,1):uint()
     if first < 0xFF then
-        if buf:len() > 1 then
-            return first, buf:range(1)       -- drop 1 byte
-        else
-            return first, buf:range(0)       -- nothing remains after dropping a byte
-        end
+        return first, buf:len() > 1 and buf:range(1) or buf:range(0)
     end
 
     -- 2. extended 32‑bit form (5 bytes total)
@@ -981,15 +957,16 @@ end
 local function getBitSet(buf, is_big_endian)
     local bitset_count
     bitset_count, buf = decodeSize(buf, is_big_endian)
-    if buf:len() < bitset_count then
-        return nil, nil
-    elseif buf:len() == bitset_count then
-        return buf, nil
-    else
-        return buf:range(0, bitset_count), buf:range(bitset_count)
-    end
+    return buf:len() < bitset_count and nil or buf:len() == bitset_count and buf or buf:range(0, bitset_count), buf:range(bitset_count)
 end
 
+----------------------------------------------
+--- pvaDecodeTypeCode: decode the type code from the buffer
+----------------------------------------------
+--- @param buf table to read the type code from
+--- @param tree table to add the type code to
+--- @return table the remaining buffer
+--- @return number the type code
 local function pvaDecodeTypeCode(buf, tree)
     if buf:len() < 1 then
         tree:add_expert_info(PI_MALFORMED, PI_ERROR, "PVData Type Code: Truncated")
@@ -1002,13 +979,7 @@ local function pvaDecodeTypeCode(buf, tree)
         return nil, nil
     end
 
-    if buf:len() > 1 then
-        buf = buf:range(1)
-    else
-        buf = buf:range(0)
-    end
-
-    return type_code, buf
+    return type_code, buf:len() > 1 and buf:range(1) or buf:range(0)
 end
 
 
@@ -1054,7 +1025,6 @@ end
 --- @param type_code number the type code
 --- @return string the string representation of the data
 --- @return number the number of bytes the data took on the wire
-----------------------------------------------
 function getDataForType(buf, is_big_endian, type_code)
     -- only for bool, int, float, and string scalars
     local value = ""
@@ -1101,7 +1071,6 @@ end
 --- @param label string the label to use for the data any label for the data that has been determined before (defaults to "value")
 --- @param len number the length of the data to read from the buffer
 --- @return table the remaining buffer
-----------------------------------------------
 function displayDataForType(buf, is_big_endian, type_code, tree, label, len)
     -- only for non complex types
     local value
@@ -1155,17 +1124,11 @@ end
 --- @param extras string the extras to add to the field name e.g. where to store the field (→2) or where to retrieve the field (←2)
 --- @return table the field
 --- @return table the remaining buffer
-----------------------------------------------
 local function pvaDecodeIntrospectionData(buf, tree, is_big_endian, request_id, name, parent_field, sub_type_id_buf, extras)
-    -- display is optional, defaults to true
     display = display or true
-    -- extras is optional, defaults to empty string
     extras = extras or ""
-    -- where the typecode will come from or has come from, either the start of this buf or the start of this field in the parent buf
     local type_code_buf = sub_type_id_buf or buf
-    -- is this a sub-field?
     local is_sub_field = sub_type_id_buf ~= nil
-    -- determine the extent of the subfield to mark in the Protocol tree
     local sub_field_offset = 1
     if is_sub_field then sub_field_offset = type_code_buf:len() - buf:len() + 1 end
 
@@ -1286,7 +1249,6 @@ end
 --- @param request_id number this is the request id to be used to store pull introspection data from
 --- @return table the Field
 --- @return table the remaining buffer
-----------------------------------------------
 local function pvaDecodePVDataType(buf, tree, is_big_endian, request_id)
     local field, data_buf
     field, data_buf = pvaDecodeIntrospectionData(buf, tree, is_big_endian, request_id, nil, nil, nil, nil)
@@ -1294,151 +1256,19 @@ local function pvaDecodePVDataType(buf, tree, is_big_endian, request_id)
 end
 
 ----------------------------------------------
---- decodeSubCommand: decode the sub command from the buffer
+--- pruneUncommonRoots: prune the trees that are not common to to both the
+--- current field path and the previous field path.
+--- This is used when we encounter a new field with different parents and we need
+--- to know where to attach the new tree.
+--- We prune back all parent trees that are different, then add the new tree to the common parent.
 ----------------------------------------------
---- @param buf any message to decode
---- @param pkt any the packet to decode
---- @param tree any the root tree to attach the decoded data to
---- @param is_big_endian boolean is the data to be decoded big-endian
---- @param cmd number the command to decode
---- @param for_client boolean if this is a client message
---- @return number the request id
---- @return number the sub command
---- @return table the remaining buffer
-----------------------------------------------
-local function decodeSubCommand(buf, pkt, tree, is_big_endian, cmd, for_client)
-    local sid, request_id
-
-    -- optionally get client sid
-    if for_client ~= nil and for_client then
-        if buf:len() < 9 then
-            tree:add_expert_info(PI_MALFORMED, PI_ERROR, "Client Op Decoder: Truncated Command Header")
-            return nil, nil, nil
-        end
-        sid = getUint64(buf(0, 4), is_big_endian)
-        tree:add(fsid, buf(0, 4), sid)
-        buf = buf:range(4)
-    end
-
-    -- get request_id
-    if buf:len() < 5 then
-        tree:add_expert_info(PI_MALFORMED, PI_ERROR, "Server Op Decoder: Truncated Command Header")
-        return nil, nil, nil
-    end
-
-    request_id = getUint64(buf(0, 4), is_big_endian)
-    tree:add(frequest_id, buf(0, 4), request_id)
-    buf = buf:range(4)
-
-    -- get sub command
-    local sub_command = buf(0, 1):uint()
-    local sub_tree = tree:add(fsubcmd, buf(0, 1), sub_command)
-    sub_tree:add(fsubcmd_proc, buf(0, 1), sub_command)
-    sub_tree:add(fsubcmd_init, buf(0, 1), sub_command)
-    sub_tree:add(fsubcmd_dstr, buf(0, 1), sub_command)
-    sub_tree:add(fsubcmd_get,  buf(0, 1), sub_command)
-    sub_tree:add(fsubcmd_gtpt, buf(0, 1), sub_command)
-
-    -- update cols info
-    local cname = application_messages[cmd]
-    if for_client ~= nil and for_client then
-        pkt.cols.info:append(string.format("%s(sid=%u, request_id=%u, sub=%02x), ", cname, sid, request_id, sub_command))
-    else
-        pkt.cols.info:append(string.format("cmd=%02x %s(request_id=%u, sub=%02x)", cmd , cname, request_id, sub_command))
-    end
-
-    if buf:len() == 1 then
-        return request_id, sub_command, nil
-    else
-        return request_id, sub_command, buf:range(1)
-    end
-end
-
-----------------------------------------------
---- skipNextElement: skip the next element and return the remaining buffer
-----------------------------------------------
---- @param buf: the buffer to decode from
---- @param is_big_endian: true if the buffer is big endian
---- @return table the remaining buffer
-----------------------------------------------
-local function skipNextElement(buf, is_big_endian)
-    local len, remaining_buf = decodeSize(buf, is_big_endian)
-    if len == remaining_buf:len() then
-        return nil
-    else
-        return remaining_buf(len + 1)
-    end
-end
-
-----------------------------
--- PVData decoders
-----------------------------
-
--- Helper function to identify authentication method strings
-local function isAuthMethod(method_name, prev_was_method)
-    if not method_name then
-        return false
-    end
-
-    -- Handle both TvbRange and string types
-    local method_str
-    if type(method_name) == "string" then
-        method_str = method_name
-    else
-        method_str = method_name:string()
-    end
-
-    local lower_case_method_name = method_str:lower()
-
-    -- Strong method indicators
-    local strong_methods = {"x509", "ca"}
-    for _, method in ipairs(strong_methods) do
-        if lower_case_method_name == method then
-            return true
-        end
-    end
-
-    -- "anonymous" is typically a username unless it's clearly in method position
-    if lower_case_method_name == "anonymous" then
-        -- Treat as method only if we've already seen a method (meaning this starts a new entry)
-        return prev_was_method
-    end
-
-    return false
-end
-
-----------------------------------------------
--- decodeStatus: decode the given message body to extract the status
--- @param buf: the buffer to decode from
--- @param tree: the tree node to decode into
--- @param is_big_endian is the byte stream big endian
-----------------------------------------------
-local function decodeStatus (buf, tree, is_big_endian)
-    local status_code = buf(0,1):uint()
-    local sub_tree = tree:add(fstatus, buf(0,1))
-    if buf:len()>1 then
-        buf = buf(1)
-    end
-
-    if status_code ==0xFF then
-        return buf
-    else
-        local message, stack
-        message, buf = decodeString(buf, is_big_endian)
-        stack, buf = decodeString(buf, is_big_endian)
-        sub_tree:append_text(message:string())
-        if(status_code ~=0 and stack:len()>0)
-        then
-            sub_tree:add_expert_info(PI_RESPONSE_CODE, PI_WARN, stack:string())
-        end
-        return buf
-    end
-end
-
+--- @param trees table the trees to prune
+--- @param field_path table the field path
+--- @param last_field_path table the last field path
+--- @return table the pruned trees
+--- @return number the last common position
 function pruneUncommonRoots(trees, field_path, last_field_path)
-    if not trees or not last_field_path then
-        return trees, field_path
-    end
+    if not trees or not last_field_path then return trees, field_path end
 
     local  last_common_pos = 1
     -- prune back all parent trees that are different
@@ -1464,23 +1294,40 @@ function pruneUncommonRoots(trees, field_path, last_field_path)
     end
 
     return  trees, last_common_pos
-
 end
 
+----------------------------------------------
+--- addRequiredRoot: add a new tree to the trees list
+--- Only add a new tree if the current field position (depth) is
+--- not the same as the tree-depth we've already deployed.
+--- This means that we won't add a new tree when its already added.
+--- This is used to add new complex fields to the tree.
+----------------------------------------------
+--- @param buf table the buffer to decode from
+--- @param trees table the trees to add the new tree to
+--- @param current_field_pos number the current field position
+--- @param label string the label to add to the tree
 function addRequiredRoot(buf, trees, current_field_pos, label)
     local trees_len = #trees
     if trees_len ~= current_field_pos then
         local current_tree = trees[trees_len]
         if current_tree then
             if not buf then
-                table.insert(trees, current_tree:add(label))
-            else
+                table.insert(trees, current_tree:add(label)) else
                 table.insert(trees, current_tree:add(buf(0,1), label))
             end
         end
     end
 end
 
+----------------------------------------------
+--- decodePVField: decode the given message body into the given root tree node
+----------------------------------------------
+--- @param buf table the buffer to decode from
+--- @param root_tree table the root tree to decode into
+--- @param is_big_endian boolean is the byte stream big endian
+--- @param request_id number the request id
+--- @param bitset_str string the bitset to decode
 function decodePVField(buf, root_tree, is_big_endian, request_id, bitset_str)
     local root_field = FieldRegistry:getRootField(request_id)
     if not root_field then return end
@@ -1572,17 +1419,140 @@ function pvaDecodePVData(buf, tree, is_big_endian, request_id, bitset)
     decodePVField(buf, tree, is_big_endian, request_id, bitset_str)
 end
 
+
+----------------------------------------------
+--- decodeSubCommand: decode the sub command from the buffer
+----------------------------------------------
+--- @param buf any message to decode
+--- @param pkt any the packet to decode
+--- @param tree any the root tree to attach the decoded data to
+--- @param is_big_endian boolean is the data to be decoded big-endian
+--- @param cmd number the command to decode
+--- @param for_client boolean if this is a client message
+--- @return number the request id
+--- @return number the sub command
+--- @return table the remaining buffer
+local function decodeSubCommand(buf, pkt, tree, is_big_endian, cmd, for_client)
+    local sid, request_id
+
+    -- optionally get client sid
+    if for_client ~= nil and for_client then
+        if buf:len() < 9 then
+            tree:add_expert_info(PI_MALFORMED, PI_ERROR, "Client Op Decoder: Truncated Command Header")
+            return nil, nil, nil
+        end
+        sid = getUint64(buf(0, 4), is_big_endian)
+        tree:add(fsid, buf(0, 4), sid)
+        buf = buf:range(4)
+    end
+
+    -- get request_id
+    if buf:len() < 5 then
+        tree:add_expert_info(PI_MALFORMED, PI_ERROR, "Server Op Decoder: Truncated Command Header")
+        return nil, nil, nil
+    end
+
+    request_id = getUint64(buf(0, 4), is_big_endian)
+    tree:add(frequest_id, buf(0, 4), request_id)
+    buf = buf:range(4)
+
+    -- get sub command
+    local sub_command = buf(0, 1):uint()
+    local sub_tree = tree:add(fsubcmd, buf(0, 1), sub_command)
+    sub_tree:add(fsubcmd_proc, buf(0, 1), sub_command)
+    sub_tree:add(fsubcmd_init, buf(0, 1), sub_command)
+    sub_tree:add(fsubcmd_dstr, buf(0, 1), sub_command)
+    sub_tree:add(fsubcmd_get,  buf(0, 1), sub_command)
+    sub_tree:add(fsubcmd_gtpt, buf(0, 1), sub_command)
+
+    -- update cols info
+    local cname = application_messages[cmd]
+    if for_client ~= nil and for_client then
+        pkt.cols.info:append(string.format("%s(sid=%u, request_id=%u, sub=%02x), ", cname, sid, request_id, sub_command))
+    else
+        pkt.cols.info:append(string.format("cmd=%02x %s(request_id=%u, sub=%02x)", cmd , cname, request_id, sub_command))
+    end
+
+    if buf:len() == 1 then
+        return request_id, sub_command, nil
+    else
+        return request_id, sub_command, buf:range(1)
+    end
+end
+
+----------------------------------------------
+--- skipNextElement: skip the next element and return the remaining buffer
+----------------------------------------------
+--- @param buf: the buffer to decode from
+--- @param is_big_endian: true if the buffer is big endian
+--- @return table the remaining buffer
+local function skipNextElement(buf, is_big_endian)
+    local len, remaining_buf = decodeSize(buf, is_big_endian)
+    return len ~= remaining_buf:len() and remaining_buf(len + 1) or nil
+end
+
+----------------------------
+-- PVData decoders
+----------------------------
+
+-- Helper function to identify authentication method strings
+local function isAuthMethod(method_name, prev_was_method)
+    if not method_name then return false end
+
+    -- Handle both TvbRange and string types
+    local method_str = type(method_name) == "string" and method_name or method_name:string()
+
+    local lower_case_method_name = method_str:lower()
+
+    -- Strong method indicators
+    local strong_methods = {"x509", "ca"}
+    for _, method in ipairs(strong_methods) do
+        if lower_case_method_name == method then return true end
+    end
+
+    -- "anonymous" is typically a username unless it's clearly in method position
+    if lower_case_method_name == "anonymous" then return prev_was_method end
+
+    return false
+end
+
+----------------------------------------------
+-- decodeStatus: decode the given message body to extract the status
+----------------------------------------------
+-- @param buf: the buffer to decode from
+-- @param tree: the tree node to decode into
+-- @param is_big_endian is the byte stream big endian
+local function decodeStatus (buf, tree, is_big_endian)
+    local status_code = buf(0,1):uint()
+    local sub_tree = tree:add(fstatus, buf(0,1))
+    buf = buf:len() > 1 and buf(1) or buf
+
+    if status_code ==0xFF then
+        return buf
+    else
+        local message, stack
+        message, buf = decodeString(buf, is_big_endian)
+        stack, buf = decodeString(buf, is_big_endian)
+        sub_tree:append_text(message:string())
+        if (status_code ~=0 and stack:len()>0) then
+            sub_tree:add_expert_info(PI_RESPONSE_CODE, PI_WARN, stack:string())
+        end
+        return buf
+    end
+end
+
+
 ----------------------------
 -- command decoders
 ----------------------------
 
 ----------------------------------------------
 -- pvaClientSearchDecoder: decode the given message body into the given packet and root tree node
+----------------------------------------------
 -- @param buf: the buffer to decode from
 -- @param pkt: the packet to decode into
 -- @param tree: the tree node to decode into
 -- @param is_big_endian is the byte stream big endian
-----------------------------------------------
 local function pvaClientSearchDecoder (buf, pkt, tree, is_big_endian)
     local SEARCH_HEADER_SIZE = 26
     local raw_sequence_number = buf(0,4)
