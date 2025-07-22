@@ -84,39 +84,31 @@ local status_codes = {
 
 local pva = Proto("pva", "Process Variable Access")
 
-local placeholder   = ProtoField.bytes("pva.placeholder", " ")
-
 ----------------------------------------------
 -- Magic, Version, Flags, Command, Control Command, Control Data, Size, Body, PVData, GUID
 ----------------------------------------------
 
-local fmagic        = ProtoField.uint8(     "pva.magic",        "Magic",            base.HEX)
-local fver          = ProtoField.uint8(     "pva.version",      "Version",          base.DEC)
-local fflags        = ProtoField.uint8(     "pva.flags",        "Flags",            base.HEX)
-local fflag_dir     = ProtoField.uint8(     "pva.direction",    "Direction",
-        base.HEX, {[0]="client",[1]="server"}, 0x40)
-local fflag_end     = ProtoField.uint8(     "pva.endian",       "Byte order",
-        base.HEX, {[0]="LSB",[1]="MSB"}, 0x80)
-local fflag_msgtype = ProtoField.uint8(     "pva.msg_type",     "Message type",
-        base.HEX, {[0]="Application",[1]="Control"}, 0x01)
-local fflag_segmented = ProtoField.uint8(   "pva.segmented",    "Segmented",
-        base.HEX, {[0]="Not segmented",[1]="First segment",[2]="Last segment",[3]="In-the-middle segment"}, 0x30)
-local fcmd          = ProtoField.uint8(     "pva.command",      "Command",
-        base.HEX, application_messages)
-local fctrlcmd      = ProtoField.uint8(     "pva.ctrlcommand",  "Control Command",
-        base.HEX, control_messages)
-local fctrldata     = ProtoField.uint32(    "pva.ctrldata",     "Control Data",     base.HEX)
-local fsize         = ProtoField.uint32(    "pva.size",         "Size",             base.DEC)
-local fbody         = ProtoField.bytes(     "pva.body",         "Body")
-local fpvd          = ProtoField.bytes(     "pva.pvd",          "PVData Body")
-local fguid         = ProtoField.bytes(     "pva.guid",         "GUID")
+local fmagic            = ProtoField.uint8(     "pva.magic",                "Magic",            base.HEX)
+local fver              = ProtoField.uint8(     "pva.version",              "Version",          base.DEC)
+local fflags            = ProtoField.uint8(     "pva.flags",                "Flags",            base.HEX)
+local fflag_dir         = ProtoField.uint8(     "pva.direction",            "Direction",        base.HEX, {[0]="client",[1]="server"}, 0x40)
+local fflag_end         = ProtoField.uint8(     "pva.endian",               "Byte order",       base.HEX, {[0]="LSB",[1]="MSB"}, 0x80)
+local fflag_msgtype     = ProtoField.uint8(     "pva.msg_type",             "Message type",     base.HEX, {[0]="Application",[1]="Control"}, 0x01)
+local fflag_segmented   = ProtoField.uint8(     "pva.segmented",            "Segmented",        base.HEX, {[0]="Not segmented",[1]="First segment",[2]="Last segment",[3]="In-the-middle segment"}, 0x30)
+local fcmd              = ProtoField.uint8(     "pva.command",              "Command",          base.HEX, application_messages)
+local fctrlcmd          = ProtoField.uint8(     "pva.ctrlcommand",          "Control Command",  base.HEX, control_messages)
+local fctrldata         = ProtoField.uint32(    "pva.ctrldata",             "Control Data",     base.HEX)
+local fsize             = ProtoField.uint32(    "pva.size",                 "Size",             base.DEC)
+local fbody             = ProtoField.bytes(     "pva.body",                 "Body")
+local fpvd              = ProtoField.bytes(     "pva.pvd",                  "PVData Body")
+local fguid             = ProtoField.bytes(     "pva.guid",                 "GUID")
 
 ----------------------------------------------
 -- PVData Fields
 ----------------------------------------------
 
 local fpvd_field_name    = ProtoField.string(   "pva.pvd_field_name",       "Field Name")
-local fpvd_type          = ProtoField.uint8(    "pva.pvd_type",             "Type Code",   base.HEX)
+local fpvd_type          = ProtoField.uint8(    "pva.pvd_type",             "Type Code",        base.HEX)
 local fpvd_type_id       = ProtoField.uint16(   "pva.pvd_type_id",          "Type ID")
 
 local fpvd_struct        = ProtoField.bytes(    "pva.pvd_struct",           "PVStructure")
@@ -129,69 +121,69 @@ local fpvd_debug         = ProtoField.bytes(    "pva.pvd_debug",            "Deb
 -- Common Fields
 ----------------------------------------------
 
-local fcid          = ProtoField.uint32(    "pva.cid",          "Client Channel ID")
-local fsid          = ProtoField.uint32(    "pva.sid",          "Server Channel ID")
-local frequest_id         = ProtoField.uint32(    "pva.request_id",         "Operation ID")
-local fsubcmd       = ProtoField.uint8(     "pva.subcmd",       "Sub-command",      base.HEX)
-local fsubcmd_proc  = ProtoField.uint8(     "pva.process",      "Process",          base.HEX, {[0]="",[1]="Yes"}, 0x04)
-local fsubcmd_init  = ProtoField.uint8(     "pva.init",         "Init   ",          base.HEX, {[0]="",[1]="Yes"}, 0x08)
-local fsubcmd_dstr  = ProtoField.uint8(     "pva.destroy",      "Destroy",          base.HEX, {[0]="",[1]="Yes"}, 0x10)
-local fsubcmd_get   = ProtoField.uint8(     "pva.get",          "Get    ",          base.HEX, {[0]="",[1]="Yes"}, 0x40)
-local fsubcmd_gtpt  = ProtoField.uint8(     "pva.getput",       "GetPut ",          base.HEX, {[0]="",[1]="Yes"}, 0x80)
-local fstatus       = ProtoField.uint8(     "pva.status",       "Status",           base.HEX, status_codes)
+local fcid              = ProtoField.uint32(    "pva.cid",                  "Client Channel ID")
+local fsid              = ProtoField.uint32(    "pva.sid",                  "Server Channel ID")
+local frequest_id       = ProtoField.uint32(    "pva.request_id",           "Operation ID")
+local fsubcmd           = ProtoField.uint8(     "pva.subcmd",               "Sub-command",      base.HEX)
+local fsubcmd_proc      = ProtoField.uint8(     "pva.process",              "Process",          base.HEX, {[0]="",[1]="Yes"}, 0x04)
+local fsubcmd_init      = ProtoField.uint8(     "pva.init",                 "Init   ",          base.HEX, {[0]="",[1]="Yes"}, 0x08)
+local fsubcmd_dstr      = ProtoField.uint8(     "pva.destroy",              "Destroy",          base.HEX, {[0]="",[1]="Yes"}, 0x10)
+local fsubcmd_get       = ProtoField.uint8(     "pva.get",                  "Get    ",          base.HEX, {[0]="",[1]="Yes"}, 0x40)
+local fsubcmd_gtpt      = ProtoField.uint8(     "pva.getput",               "GetPut ",          base.HEX, {[0]="",[1]="Yes"}, 0x80)
+local fstatus           = ProtoField.uint8(     "pva.status",               "Status",           base.HEX, status_codes)
 
 ----------------------------------------------
 -- BEACON
 ----------------------------------------------
 
-local fbeacon_seq = ProtoField.uint8("pva.bseq", "Beacon sequence#")
-local fbeacon_change = ProtoField.uint16("pva.change", "Beacon change count")
+local fbeacon_seq       = ProtoField.uint8(     "pva.bseq",                 "Beacon sequence#")
+local fbeacon_change    = ProtoField.uint16(    "pva.change",               "Beacon change count")
 
 -- For CONNECTION_VALIDATION
 
-local fvalid_bsize  = ProtoField.uint32(    "pva.qsize",        "Client Queue Size")
-local fvalid_isize  = ProtoField.uint16(    "pva.isize",        "Client Introspection registery size")
-local fvalid_qos    = ProtoField.uint16(    "pva.qos",          "Client QoS",   base.HEX)
-local fvalid_method = ProtoField.string(    "pva.method",       "AuthZ method")
-local fvalid_azflg  = ProtoField.uint8 (    "pva.authzflag",    "AuthZ Flags",  base.HEX)
-local fvalid_azcnt  = ProtoField.uint8 (    "pva.authzcnt",     "AuthZ Elem‑cnt", base.DEC)
+local fvalid_bsize      = ProtoField.uint32(    "pva.qsize",                "Client Queue Size")
+local fvalid_isize      = ProtoField.uint16(    "pva.isize",                "Client Introspection registery size")
+local fvalid_qos        = ProtoField.uint16(    "pva.qos",                  "Client QoS",   base.HEX)
+local fvalid_method     = ProtoField.string(    "pva.method",               "AuthZ method")
+local fvalid_azflg      = ProtoField.uint8 (    "pva.authzflag",            "AuthZ Flags",  base.HEX)
+local fvalid_azcnt      = ProtoField.uint8 (    "pva.authzcnt",             "AuthZ Elem‑cnt", base.DEC)
 
 -- For AUTHZ_REQUEST
 
-local fauthz_request = ProtoField.string(   "pva.authzrequest", "AuthZ request")
-local fvalid_host   = ProtoField.string(    "pva.host",         "AuthZ host")
-local fvalid_authority = ProtoField.string( "pva.authority",    "AuthZ authority")
-local fvalid_user   = ProtoField.string(    "pva.user",         "AuthZ name")
-local fvalid_account = ProtoField.string(   "pva.account",      "AuthZ account")
-local fvalid_isTLS  = ProtoField.uint8(     "pva.isTLS",        "AuthZ isTLS")
+local fauthz_request    = ProtoField.string(    "pva.authzrequest",         "AuthZ request")
+local fvalid_host       = ProtoField.string(    "pva.host",                 "AuthZ host")
+local fvalid_authority  = ProtoField.string(    "pva.authority",            "AuthZ authority")
+local fvalid_user       = ProtoField.string(    "pva.user",                 "AuthZ name")
+local fvalid_account    = ProtoField.string(    "pva.account",              "AuthZ account")
+local fvalid_isTLS      = ProtoField.uint8(     "pva.isTLS",                "AuthZ isTLS")
 
 -- For AUTHZ_RESPONSE
 
-local fauthz_response = ProtoField.string("pva.authzresponse",  "AuthZ response")
+local fauthz_response   = ProtoField.string(    "pva.authzresponse",        "AuthZ response")
 
 -- For AuthZ Entry Array (removed fauth_entry_index as no longer needed)
 
 -- For SEARCH
-local fsearch_seq   = ProtoField.uint32(    "pva.seq",          "Search Sequence #")
-local fsearch_addr  = ProtoField.bytes(     "pva.addr",          "Address")
-local fsearch_port  = ProtoField.uint16(    "pva.port",         "Port")
-local fsearch_mask  = ProtoField.uint8(     "pva.mask",         "Mask",         base.HEX)
-local fsearch_mask_repl  = ProtoField.uint8("pva.reply",        "Reply",        base.HEX, {[0]="Optional",[1]="Required"}, 0x01)
-local fsearch_mask_bcast = ProtoField.uint8("pva.ucast",        "Reply",        base.HEX, {[0]="Broadcast",[1]="Unicast"}, 0x80)
-local fsearch_proto = ProtoField.string(    "pva.proto",        "Transport Protocol")
-local fsearch_count = ProtoField.uint16(    "pva.count",        "PV Count")
-local fsearch_cid   = ProtoField.uint32(    "pva.cid",          "CID")
-local fsearch_name  = ProtoField.string(    "pva.pv",           "Name")
+local fsearch_seq       = ProtoField.uint32(    "pva.seq",                  "Search Sequence #")
+local fsearch_addr      = ProtoField.bytes(     "pva.addr",                 "Address")
+local fsearch_port      = ProtoField.uint16(    "pva.port",                 "Port")
+local fsearch_mask      = ProtoField.uint8(     "pva.mask",                 "Mask",         base.HEX)
+local fsearch_mask_repl = ProtoField.uint8(     "pva.reply",                "Reply",        base.HEX, {[0]="Optional",[1]="Required"}, 0x01)
+local fsearch_mask_bcast= ProtoField.uint8(     "pva.ucast",                "Reply",        base.HEX, {[0]="Broadcast",[1]="Unicast"}, 0x80)
+local fsearch_proto     = ProtoField.string(    "pva.proto",                "Transport Protocol")
+local fsearch_count     = ProtoField.uint16(    "pva.count",                "PV Count")
+local fsearch_cid       = ProtoField.uint32(    "pva.cid",                  "CID")
+local fsearch_name      = ProtoField.string(    "pva.pv",                   "Name")
 
 -- For SEARCH_RESPONSE
-local fsearch_found = ProtoField.bool(      "pva.found",        "Found")
+local fsearch_found     = ProtoField.bool(      "pva.found",                "Found")
 
 -----------------------------------------------
 --- ProtoFields variables
 -----------------------------------------------
 
 pva.fields = {
-    placeholder, fmagic, fver, fflags, fflag_dir, fflag_end, fflag_msgtype, fflag_segmented, fcmd, fctrlcmd, fctrldata, fsize, fbody, fpvd, fguid,
+    fmagic, fver, fflags, fflag_dir, fflag_end, fflag_msgtype, fflag_segmented, fcmd, fctrlcmd, fctrldata, fsize, fbody, fpvd, fguid,
     fcid, fsid, frequest_id, fsubcmd, fsubcmd_proc, fsubcmd_init, fsubcmd_dstr, fsubcmd_get, fsubcmd_gtpt, fstatus,
     fbeacon_seq, fbeacon_change,
     fvalid_bsize, fvalid_isize, fvalid_qos, fvalid_host, fvalid_method, fvalid_authority, fvalid_account, fvalid_user, fvalid_isTLS,
@@ -658,7 +650,6 @@ end
 ----------------------------------------------
 --- @param request_id number the request_id to fill out the bitset for
 --- @param bitset_str string the bitset string to fill out
-
 function FieldRegistry:fillOutIndexes(request_id, bitset_str)
     -- Local recursive function to count all fields and subfields
     local function subFieldCount(field)
@@ -1208,7 +1199,6 @@ local function pvaDecodeIntrospectionData(buf, tree, is_big_endian, request_id, 
     -- if the type code has a tag, then we need to get the tag from the buffer
     if is_ft_id then
         -- get tag
-        local tag_buf = buf
         tag, buf = decodeSize(buf, is_big_endian)
         extras = extras .. string.format("/%d", tag)
     end
@@ -1235,7 +1225,6 @@ local function pvaDecodeIntrospectionData(buf, tree, is_big_endian, request_id, 
         local is_foba_id = isFixedArrayType(field_desc) or isBoundedArrayType(field_desc)
         if is_foba_id then
             -- get array len/bounds
-            local len_buf = buf
             len, buf = decodeSize(buf, is_big_endian)
             extras = extras .. string.format("[%d]", len)
         end
@@ -1385,56 +1374,6 @@ end
 -- PVData decoders
 ----------------------------
 
--- EPICS timestamp conversion to human readable format
-local function formatEpicsTimestamp(seconds, nanoseconds)
-    -- EPICS epoch is January 1, 1990 00:00:00 UTC
-    -- Unix epoch is January 1, 1970 00:00:00 UTC
-    -- Difference: 631152000 seconds (20 years)
-    local unix_seconds = seconds + 631152000
-    local date_str = os.date("!%Y-%m-%d %H:%M:%S", unix_seconds)
-    return string.format("%s.%09d UTC", date_str, nanoseconds)
-end
-
--- Enhanced alarm status decoder
-local function decodeAlarmStatus(severity, status)
-    local severity_names = {
-        [0] = "NO_ALARM",
-        [1] = "MINOR",
-        [2] = "MAJOR",
-        [3] = "INVALID"
-    }
-
-    local status_names = {
-        [0] = "NO_ALARM",
-        [1] = "READ",
-        [2] = "WRITE",
-        [3] = "HIHI",
-        [4] = "HIGH",
-        [5] = "LOLO",
-        [6] = "LOW",
-        [7] = "STATE",
-        [8] = "COS",
-        [9] = "COMM",
-        [10] = "TIMEOUT",
-        [11] = "HWLIMIT",
-        [12] = "CALC",
-        [13] = "SCAN",
-        [14] = "LINK",
-        [15] = "SOFT",
-        [16] = "BAD_SUB",
-        [17] = "UDF",
-        [18] = "DISABLE",
-        [19] = "SIMM",
-        [20] = "READ_ACCESS",
-        [21] = "WRITE_ACCESS"
-    }
-
-    local sev_name = severity_names[severity] or string.format("UNKNOWN(%d)", severity)
-    local stat_name = status_names[status] or string.format("UNKNOWN(%d)", status)
-
-    return sev_name, stat_name
-end
-
 -- Helper function to identify authentication method strings
 local function isAuthMethod(method_name, prev_was_method)
     if not method_name then
@@ -1496,51 +1435,6 @@ local function decodeStatus (buf, tree, is_big_endian)
     end
 end
 
-function displayFieldPath(buf, root_tree, is_big_endian, field_path, last_field_path)
-    -- start from top
-    local pos = 1
-    local current_tree = root_tree
-
-    -- find starting position
-    if last_field_path then
-        -- copy tree's from last to current until we diverge
-        for i = 1, math.min(#last_field_path, #field_path) do
-            local last = last_field_path[i]
-            local current = field_path[i]
-
-            -- copy tree
-            current.tree = last.tree
-
-            if last.name ~= current.name then
-                -- we diverged
-                pos = i
-                current_tree = last.tree
-                break
-            end
-        end
-    end
-
-    -- Loop over remaining nodes to leaf
-    for i = pos, #field_path do
-        local current = field_path[i]
-        current.tree = current_tree -- set tree for this field
-
-        local field_label = formatField(current.type_code, current.name, current.type)
-
-        if isComplexType(current.type_code) then
-            -- just show the label as this is the complex type
-            -- create a new tree and continue
-            current_tree = current_tree:add(field_label)
-        else
-            -- this is a leaf node so need to show data
-            current_tree:add(field_label)
-            --buf = displayDataForType(buf, is_big_endian, type_code, current_tree, field_label, current.len)
-        end
-    end
-
-    return field_path, buf
-end
-
 function pruneUncommonRoots(trees, field_path, last_field_path)
     if not trees or not last_field_path then
         return trees, field_path
@@ -1548,7 +1442,6 @@ function pruneUncommonRoots(trees, field_path, last_field_path)
 
     local  last_common_pos = 1
     -- prune back all parent trees that are different
-    local common_len = math.min( #field_path, #last_field_path)
     if #trees > 1 and  #last_field_path > 1 then
         for tree_pos = 2, #trees do
             if tree_pos > #field_path then
@@ -1710,7 +1603,7 @@ local function pvaClientSearchDecoder (buf, pkt, tree, is_big_endian)
 
     -- get protocols list
     n_protocols, buf = decodeSize(buf(SEARCH_HEADER_SIZE), is_big_endian)
-    for i=0, n_protocols -1 do
+    for _=0, n_protocols -1 do
         local name
         name, buf = decodeString(buf, is_big_endian)
         tree:add(fsearch_proto, name)
@@ -1723,7 +1616,7 @@ local function pvaClientSearchDecoder (buf, pkt, tree, is_big_endian)
     if n_pvs >0 then
         buf = buf(2)
 
-        for i=0, n_pvs -1 do
+        for _=0, n_pvs -1 do
             local name
             local raw_cid = buf(0,4)
             local cid = getUint(raw_cid, is_big_endian)
@@ -2067,7 +1960,7 @@ end
 -- @param is_big_endian is the byte stream big endian
 -- @param cmd the command number
 ----------------------------------------------
-local function pvaDestroyChannelDecoder (buf, pkt, tree, is_big_endian, cmd)
+local function pvaDestroyChannelDecoder (buf, pkt, tree, is_big_endian, _)
     local cid = getUint64(buf, is_big_endian)
     local sid = getUint64(buf(4), is_big_endian)
     pkt.cols.info:append("DESTROY_CHANNEL(cid="..cid..", sid="..sid.."), ")
@@ -2268,7 +2161,7 @@ local function decode(buf, pkt, root)
     local cmd = raw_cmd:uint()
     local show_generic_cmd = 1
 
-    local buf = buf(PVA_HEADER_LEN, message_len);
+    buf = buf(PVA_HEADER_LEN, message_len);
     if is_ctrl_cmd == 0
     then
         -- application message
@@ -2401,7 +2294,7 @@ if not status then
     print(err)
 end
 
-local status, err = pcall(function() pva:register_heuristic("udp", test_pva) end)
+status, err = pcall(function() pva:register_heuristic("udp", test_pva) end)
 if not status then
     print("Failed to register PVA heuristic UDP dissector.  Must manually specify UDP port! (try newer wireshark?)")
     print(err)
