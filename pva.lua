@@ -701,6 +701,7 @@ function FieldRegistry:fillOutIndexes(request_id, bitset_str)
 
         if result[bit_pos] then  -- If bit is set
             local field = FieldRegistry:getIndexed(request_id, index)
+            if not field then return bitset_str end
             if isComplexType(field.type_code) then
                 -- Calculate total subfield count for this complex field
                 local total_subfields = subFieldCount(field) - 1  -- Subtract 1 to exclude the parent field itself
@@ -1309,7 +1310,7 @@ local function pvaDecodeIntrospectionData(buf, tree, is_big_endian, request_id, 
         -- get ID
         field_id = getUint32(buf, is_big_endian)
         extras = string.format(" → %d", field_id)
-        buf = buf:range(2)
+        buf = buf:len() >2 and buf:range(2) or buf:range(1)
     end
 
     -- if the type code has a tag, then we need to get the tag from the buffer
@@ -1696,12 +1697,14 @@ function addRequiredRoot(buf, trees, current_field_pos, label)
 end
 
 function decodePVField(buf, root_tree, is_big_endian, request_id, bitset_str)
+    local root_field = FieldRegistry:getRootField(request_id)
+    if not root_field then return end
+
     if not bitset_str or #bitset_str == 0 then
         bitset_str = FieldRegistry:getFullBitSet(request_id)
         root_tree:add(buf, string.format("Effective: %s", bitset_str))
     end
 
-    local root_field = FieldRegistry:getRootField(request_id)
     local bit_count = #bitset_str
     local last_common_pos = 1
 
