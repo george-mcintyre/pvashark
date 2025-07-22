@@ -660,9 +660,6 @@ end
 --- @param bitset_str string the bitset string to fill out
 
 function FieldRegistry:fillOutIndexes(request_id, bitset_str)
-    local bit_count = #bitset_str
-    local result = {}
-
     -- Local recursive function to count all fields and subfields
     local function subFieldCount(field)
         if not field or not field.sub_fields or #field.sub_fields == 0 then
@@ -674,6 +671,23 @@ function FieldRegistry:fillOutIndexes(request_id, bitset_str)
             total = total + subFieldCount(sub_field)
         end
         return total
+    end
+
+    -- Local function to count all fields and subfields
+    ---@param request_id number the request id to cound the fields for
+    local function getFullCount(request_id)
+        return subFieldCount(FieldRegistry:getRootField(request_id))
+    end
+
+    local bit_count = #bitset_str
+    local full_count = getFullCount(request_id)
+
+    local result = {}
+
+    if bit_count < full_count then
+        -- add filler in front for missing fields
+        bitset_str = string.rep("0", full_count - bit_count) .. bitset_str
+        bit_count = full_count
     end
 
     -- Convert to array for easier manipulation (MSB first)
@@ -1041,14 +1055,15 @@ end
 --- @return table remaining buffer
 -----------------------------------------------------------------
 local function decodeSize(buf, is_big_endian)
+    if not buf or buf:len() < 1 then return buf, nil end
 
     -- 1. fast path: single‑byte size 0‑254
     local first = buf:range(0,1):uint()      -- one byte
     if first < 0xFF then
-        if buf:len() > 0 then
+        if buf:len() > 1 then
             return first, buf:range(1)       -- drop 1 byte
         else
-            return first, nil                -- nothing remains after dropping a byte
+            return first, buf:range(0)       -- nothing remains after dropping a byte
         end
     end
 
@@ -1103,10 +1118,10 @@ local function pvaDecodeTypeCode(buf, tree)
         return nil, nil
     end
 
-    if buf:len() > 0 then
+    if buf:len() > 1 then
         buf = buf:range(1)
     else
-        buf = nil
+        buf = buf:range(0)
     end
 
     return type_code, buf
@@ -1175,24 +1190,17 @@ function getDataForType(buf, is_big_endian, type_code)
             local signed = isIntSigned(type_code)
             size = getIntLen(type_code) / 8
             if is_big_endian then
-                if size == 8 then
-                    if signed then the_int = buf(0,size):int64() else the_int = buf(0,size):uint64() end
-                else
-                    if signed then the_int = buf(0,size):int() else the_int = buf(0,size):uint() end end
+                the_int = size == 8 and (signed and buf(0,size):int64() or buf(0,size):uint64()) or (signed and buf(0,size):int() or buf(0,size):uint())
             else
-                if size == 8 then
-                    if signed then the_int = buf(0,size):le_int64() else the_int = buf(0,size):le_uint64() end
-                else
-                    if signed then the_int = buf(0,size):le_int() else the_int = buf(0,size):le_uint() end end
+                the_int = size == 8 and (signed and buf(0,size):le_int64() or buf(0,size):le_uint64()) or (signed and buf(0,size):le_int() or buf(0,size):le_uint())
             end
             value = tostring(the_int)
 
         elseif isFloatType(type_code) then
             local the_float
             size = getFloatLen(type_code) / 8
-            if is_big_endian then the_float = buf(0,size):float() else the_float = buf(0,size):le_float() end
+            the_float = is_big_endian and buf(0,size):float() or buf(0,size):le_float()
             value = tostring(the_float)
-
         end
     end
 
@@ -1229,6 +1237,9 @@ function displayDataForType(buf, is_big_endian, type_code, tree, label, len)
             -- read len
             len, ar_buf = decodeSize(buf, is_big_endian)
         end
+        if not len or len == 0 then return buf end
+        -- Add the len encoding to the size
+        size = size + buf:len() - ar_buf:len()
 
         local ar_tree = tree:add(buf(0, 1), label)
 
@@ -1725,14 +1736,15 @@ function decodePVField(buf, root_tree, is_big_endian, request_id, bitset_str)
 
                 -- add all new complex fields
                 for current_field_pos = #trees, field_path_len do
+                    if not buf or buf:len() < 2 then return end
                     local new_field_info = field_path[current_field_pos]
                     if new_field_info then
                         local label = formatField(new_field_info.type_code, new_field_info.name, new_field_info.type)
                         if isComplexType(new_field_info.type_code) then
                             addRequiredRoot(buf, trees, current_field_pos, label)
                         else
-                            -- if this is a leaf then dangle off current tree
-                            if trees[#trees] then
+                            -- if this is a leaf then get data and dangle off current tree
+                            if trees[#trees] and buf and buf:len() > 1 then
                                 buf = displayDataForType(buf, is_big_endian, field_info.type_code, trees[#trees], label, field_info.len)
                                 break
                             end
