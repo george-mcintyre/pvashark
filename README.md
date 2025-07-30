@@ -6,6 +6,17 @@ Builds on work by mdavidsaver in https://github.com/mdavidsaver/cashark
 
 This repo extends support to all PVData and Normative Data Types.
 
+## Implementation Highlights
+
+This dissector implements a modern approach to PVAccess protocol decoding:
+
+- **Bit-Based Type Analysis**: Type codes are analyzed using bitwise operations rather than hex value lookups
+- **Field Registry System**: Sophisticated caching system for type definitions using request_id partitioning  
+- **Smart BitSet Expansion**: Automatic expansion of partial bitsets to include all required child fields
+- **Enhanced Display Format**: Standardized field format with type annotations and registry references
+
+The implementation follows the user preferences for FieldDesc formatting: `field_name (0xHH: type_name)` with clear hierarchical display and registry ID annotations.
+
 # Decoding EPICS PVAccess — Wire Protocol Specification
 
 This document describes the PVAccess wire protocol used by EPICS 7 for process variable communication (PV Access). The protocol supports complex structured data types called Normative Types (NT) and provides more sophisticated data handling than traditional Channel Access.
@@ -518,9 +529,9 @@ type with the much shorter "ID‑only" form.
 
 The rules are normative: a sender must send the full form before the first `ID‑only` reference, and the mapping is per connection and per direction.
 
-> Note a `TypeCode` is actually a `fieldDesc`
-> but if the value is greater than `TYPE_CODE_RAW` 
-> then the `fieldDesc` used is stored/retrieved to/from elsewhere 
+> **Type Code Processing**: 
+> - Values < `0xDF` (`TYPE_CODE_RAW`) are direct `fieldDesc` bytes analyzed using bit operations
+> - Values ≥ `0xDF` are special introspection codes that reference the Field Registry system 
 
 | Lead byte(s)                        | Name                     | Payload that follows                                                                |
 |-------------------------------------|--------------------------|-------------------------------------------------------------------------------------|
@@ -582,285 +593,265 @@ each subsequent byte representing the next eight nodes.
 ## 8. TypeCode System
 
 Each node in a **FieldDesc tree** begins with **one opaque byte** called a `TypeCode`.
-If this type_code is less than `TYPE_CODE_RAW` then it represents a fieldDesc.
-The PVXS implementation maps these bytes exactly to the EPICS pvData enumeration:
+The PVA dissector determines field types by examining specific bit patterns within this byte rather than relying on exact hex value lookups.
 
-### 8.1 Standard Type Codes
+### 8.1 Type Code Classification
 
-We determine the types from the fieldDesc by decoding the bit patterns, but this table
-serves as an easy reference to the most common types.
+The implementation uses bit masking operations to classify type codes into several categories:
 
-**PVXS TypeCodes** (from `src/pvxs/data.h`)
+**Special Introspection Type Codes** (handled first):
+```lua
+TYPE_CODE_NULL = 0xFF           -- NULL_TYPE: null field
+TYPE_CODE_ONLY_ID = 0xFE        -- TYPE_CODE_ONLY_ID: 0xFE + ID (2 bytes)  
+TYPE_CODE_FULL_WITH_ID = 0xFD   -- TYPE_CODE_FULL_WITH_ID: 0xFD + ID (2 bytes) + FieldDesc
+TYPE_CODE_TAGGED_ID = 0xFC      -- FULL_TAGGED_ID: 0xFC + ID (2 bytes) + tag
+TYPE_CODE_RAW = 0xDF            -- Boundary for raw FieldDesc
+```
 
-|   Code | Kind             | Array code | Size | Description                       |
-|-------:|------------------|-----------:|------|-----------------------------------|
-| `0x00` | **bool**         |     `0x08` | 1    | Boolean (0/1)                     |
-| `0x20` | **int8_t**       |     `0x28` | 1    | Signed 8‑bit integer              |
-| `0x21` | **int16_t**      |     `0x29` | 2    | Signed 16‑bit integer             |
-| `0x22` | **int32_t**      |     `0x2A` | 4    | Signed 32‑bit integer             |
-| `0x23` | **int64_t**      |     `0x2B` | 8    | Signed 64‑bit integer             |
-| `0x24` | **uint8_t**      |     `0x2C` | 1    | Unsigned 8‑bit integer            |
-| `0x25` | **uint16_t**     |     `0x2D` | 2    | Unsigned 16‑bit integer           |
-| `0x26` | **uint32_t**     |     `0x2E` | 4    | Unsigned 32‑bit integer           |
-| `0x27` | **uint64_t**     |     `0x2F` | 8    | Unsigned 64‑bit integer           |
-| `0x42` | **float**        |     `0x4A` | 4    | IEEE‑754 32‑bit float             |
-| `0x43` | **double**       |     `0x4B` | 8    | IEEE‑754 64‑bit double            |
-| `0x60` | **string**       |     `0x68` | var  | UTF‑8 encoded string              |
-| `0x80` | **struct**       |     `0x88` | —    | Composite structure               |
-| `0x81` | **union**        |     `0x89` | —    | Discriminated union               |
-| `0x82` | **any**          |     `0x8A` | —    | "variant *any*" type              |
+**Field Type Classification** (for codes < 0xDF):
+The dissector uses bit operations to determine the field kind:
 
+| Bit Pattern    | Kind        | Detection Function                      |
+|----------------|-------------|-----------------------------------------|
+| `xxx000xx`     | Boolean     | `bit.band(type_code, 0xE0) == 0x00`   |
+| `xxx001xx`     | Integer     | `bit.band(type_code, 0xE0) == 0x20`   |
+| `xxx010xx`     | Float       | `bit.band(type_code, 0xE0) == 0x40`   |
+| `xxx011xx`     | String      | `bit.band(type_code, 0xE0) == 0x60`   |
+| `xxx100xx`     | Complex     | `bit.band(type_code, 0xE0) == 0x80`   |
 
-### 8.2 FieldDesc Encoding (on‑wire introspection)
+### 8.2 TypeCode Bit Layout
 
-Every **FieldDesc** begins with one lead **TypeCode** byte whose bit layout is:
+Every **FieldDesc** byte (< 0xDF) uses the following bit layout:
 
-| bit(s) | Purpose                  | Value set                                                                                                                                                      |
-|--------|--------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 7‑5    | **Kind selector**        | `000` Bool & enum<br>`001`Integer<br>`010` Floating‑point<br>`011` String (UTF‑8)<br>`100` Complex (struct/union/variant/bounded‑string)<br>`101…111` Reserved |
-| 4‑3    | **Array flag**           | `00` Scalar<br>`01` Variable‑size array<br>`10` Bounded‑size array (followed by *Size* bound)<br>`11` Fixed‑size array (followed by *Size* count)              |
-| 2‑0    | **Kind‑specific detail** | see tables below                                                                                                                                               |
+```
+b7 b6 b5 b4 b3 b2 b1 b0
+└─┬────┘ └─┬─┘ └─┬────┘
+  │        │     └─────→ Kind‑specific details
+  │        └───────────→ Array (00=Scalar, 01=Variable, 10=Bounded, 11=Fixed)
+  └────────────────────→ Kind (000=Bool, 001=Int, 010=Float, 011=String, 100=Complex)
+```
 
-#### Integer detail bits (`kind=001`)
+### 8.3 Type-Specific Bit Analysis
 
-| bits 2‑0 | Size   | Signedness                   |
-|----------|--------|------------------------------|
-| `00x`    | 8 bit  | `x=0` signed, `x=1` unsigned |
-| `01x`    | 16 bit | ”                            |
-| `10x`    | 32 bit | ”                            |
-| `11x`    | 64 bit | ”                            |  
+**Integer Types** (when `kind == 001`):
 
-#### Floating‑point detail bits (`kind=010`)
+```
+ 001  b4 b3 b2  b1 b0
+└─┬─┘ └─┬─┘ └┬┘ └─┬─┘
+  │     │    │    └─→ Size (00=8bit, 01=16bit, 10=32bit, 11=64bit)
+  │     │    └──────→ Sign (0=signed, 1=unsigned)
+  │     └───────────→ Array
+  └─────────────────→ Int
+```
 
-| bits 2‑0 | IEEE‑754 type                     |
-|----------|-----------------------------------|
-| `010`    | binary32 (float)                  |
-| `011`    | binary64 (double)                 |
-| `1xx`    | reserved (half/quad not yet used) |  
+**Float Types** (when `kind == 010`):
 
-#### Complex detail bits (`kind=100`)
+```
+ 010  b4 b3 b2 b1 b0
+└─┬─┘ └─┬─┘ └─┬───┘
+  │     │     └─────→ Size (10=32bit float, 11=64bit double)
+  │     └───────────→ Array
+  └─────────────────→ Floating poing
+```
 
-| bits 2‑0 | Meaning                   | Extra payload                                                       |
-|----------|---------------------------|---------------------------------------------------------------------|
-| `000`    | **Structure**             | *id* (string) + *fieldCount* (Size) + `fieldName + FieldDesc` × N   |
-| `001`    | **Union**                 | *id* (string) + *memberCount* (Size) + `memberName + FieldDesc` × N |
-| `010`    | **Variant Union** (“any”) | *no additional data*                                                |
-| `011`    | **Bounded String**        | *Size* bound (**bytes**)                                            |
-| `1xx`    | reserved                  |                                                                     |  
+**Complex Types** (when `kind == 100`):
 
-Arrays of complex types carry **one extra FieldDesc** that describes the element type (after any optional bound/count).
+```
+ 100  b4 b3 b2 b1 b0
+└─┬─┘ └─┬─┘ └─┬───┘
+  │     │     └─────→ Variant (000=struct, 001=union, 010=any, 011=fixed_string)
+  │     └───────────→ Array
+  └─────────────────→ Complex
+```
+
+### 8.4 Field Registry and Type Caching
+
+The dissector implements a sophisticated **Field Registry** system to cache type definitions:
+
+**Registry Structure**:
+```lua
+FieldRegistry = {
+    data = {},    -- map of request_id -> field_id -> Field
+    roots = {}    -- map of request_id -> root Field
+}
+```
+
+**Special Type Code Processing**:
+1. **`TYPE_CODE_FULL_WITH_ID` (0xFD)**: Decode full field definition and store with ID
+2. **`TYPE_CODE_ONLY_ID` (0xFE)**: Retrieve cached field definition by ID
+3. **`TYPE_CODE_NULL` (0xFF)**: Null field (skip)
+4. **Raw FieldDesc** (< 0xDF): Direct field definition
+
+### 8.5 Standard Type Codes (Common Examples)
+
+Some common type codes decode as:
+
+**0x22 (int32_t)**:
+```
+ b7  b6  b5    b4  b3    b2  b1  b0
+  0   0   1     0   0     0   1   0    = 0x22
+┌───────────┐ ┌───────┐  ┌─┐ ┌───────┐
+│  001=Int  │ │00=Scal│  │0│ │10=32b │
+└───────────┘ └───────┘  └─┘ └───────┘
+   Integer     Scalar   Signed  32-bit
+```
+
+**0x43 (double)**:
+```
+ b7  b6  b5    b4  b3    b2  b1  b0
+  0   1   0     0   0     0   1   1    = 0x43
+┌───────────┐ ┌───────┐ ┌───────────┐
+│ 010=Float │ │00=Scal│ │ 011=64bit │
+└───────────┘ └───────┘ └───────────┘
+   Float      Scalar     Double
+```
+
+**0x80 (struct)**:
+```
+ b7  b6  b5    b4  b3    b2  b1  b0
+  1   0   0     0   0     0   0   0    = 0x80
+┌───────────┐ ┌───────┐ ┌───────────┐
+│100=Complex│ │00=Scal│ │000=struct │
+└───────────┘ └───────┘ └───────────┘
+   Complex    Scalar     Struct
+```
+
+**0x88 (struct[])**:
+```
+ b7  b6  b5    b4  b3    b2  b1  b0
+  1   0   0     0   1     0   0   0    = 0x88
+┌───────────┐ ┌───────┐ ┌───────────┐
+│100=Complex│ │01=Var │ │000=struct │
+└───────────┘ └───────┘ └───────────┘
+   Complex    Variable   Struct
+               Array
+```
+
+### 8.6 Field Display Format
+
+Fields are displayed using a standardized format implemented in the `formatField` function:
+
+**Format**: `field_name (0xHH: type_name)`
+
+Where:
+- `field_name`: Field name or "value" if unspecified
+- `0xHH`: Hexadecimal type code  
+- `type_name`: Resolved type name (with Normative Type abbreviations)
+
+**Examples**:
+```
+value (0x22: int32_t)
+alarm (0x80: alarm_t) → 2
+timeStamp[] (0x88: time_t[])
+choices (0x68: string[])
+```
+
+**Type ID Annotations**:
+- `→ N`: Field definition stored in registry with ID N
+- `← N`: Field definition retrieved from registry using ID N
+
+### 8.7 Implementation Details: Type Code Processing
+
+The PVA dissector implements a multi-stage type code analysis system:
+
+**Stage 1: Special Type Code Detection**
+```lua
+-- Check for special introspection codes first
+if isNull(type_code) then return nil end
+if isOnlyId(type_code) then 
+    -- Retrieve from Field Registry
+    field = FieldRegistry:getField(request_id, field_id)
+end
+if isFullWithId(type_code) then
+    -- Decode and store in Field Registry  
+    field = FieldRegistry:addField(name, field_desc, type_id, len, parent_field, request_id, field_id)
+end
+```
+
+**Stage 2: Bit-Based Field Analysis** (for raw FieldDesc < 0xDF)
+```lua
+-- Extract field kind using upper 3 bits
+local kind = bit.band(type_code, 0xE0)
+-- Extract array information using bits 4-3  
+local array_type = bit.band(type_code, 0x18)
+-- Extract type-specific details using lower bits
+local details = bit.band(type_code, 0x07)
+```
+
+**Stage 3: Field Registry Management**
+- Complex fields trigger recursive sub-field processing
+- All fields are indexed depth-first for BitSet correlation
+- Type definitions are cached per request_id to avoid re-transmission
+
+**Stage 4: Wireshark Display Integration**
+- Field names formatted as `field_name (0xHH: type_name)`
+- Registry annotations: `→ N` (store), `← N` (retrieve)
+- Automatic Normative Type abbreviation (e.g., "NTScalar" vs "epics:nt/NTScalar:1.0")
 
 ---
 
-#### Quick reference — lead‑byte patterns
+## 9. BitSet Processing and Field Selection
 
-| Lead byte mask           | Interpretation                                      |
-|--------------------------|-----------------------------------------------------|
-| `0bxxx00xxx`             | Scalar (any kind)                                   |
-| `0bxxx01xxx`             | Variable‑size **array** (element kind in same byte) |
-| `0bxxx10xxx` + *Size*    | Bounded‑size **array**                              |
-| `0bxxx11xxx` + *Size*    | Fixed‑size **array**                                |
-| `0b10000000` + payload   | **Structure**                                       |
-| `0b10001000` + FieldDesc | Array of Structures                                 |
-| `0b10000001` + payload   | **Union**                                           |
-| `0b10001001` + FieldDesc | Array of Unions                                     |
-| `0b10000010`             | **Variant Union**                                   |
-| `0b10001010` + FieldDesc | Array of Variant Unions                             |
-| `0b10000110` + *Size*    | **Bounded String**                                  | 
+### 9.1 Enhanced BitSet Handling
 
----
+The dissector implements sophisticated bitset processing that automatically expands partial bitsets to include all required child fields.
 
-#### Putting it together (Struct or Array example)
-
-A **Structure FieldDesc** therefore serialises as
-
-```text
-<lead‑byte 0x80 | 0x88>   // scalar or array flag
- “typeID”                 // UTF‑8
-                          // member count
-repeat N times:
- “memberName”
-                          // recursive
+**BitSet Expansion Logic**:
+```lua
+function FieldRegistry:fillOutIndexes(request_id, bitset_str)
+    -- For each set bit representing a complex field:
+    -- 1. Calculate total subfield count
+    -- 2. Set all child field bits automatically
+    -- 3. Ensure complete field hierarchy is included
+end
 ```
 
-### 8.3 TypeCode Examples 
-
-A **scalar int32_t**: TypeCode `0b00100 010` → `0x22` (`kind=001` Int, signed, scalar) – no extra data.
-
-A **double[16]** fixed array: TypeCode `kind=010` (float) + `11` (fixed array) + size bits `011` → `0x6B` followed by the **Size** value 16.
-
-A **NTScalar** for **double**: TypeCode `0b10000 000` → `0x80` (`kind=100` (complex) + `00` (non-array) + `000` (struct))
-  - `0x80` TypeCode (struct)
-    - `0x15 65 70 69 63 73 3a 6e 74 2f 4e 54 53 63 61 6c 61 72 3a 31 2e 30` Type ID
-    - `21` characters `"epics:nt/NTScalar:1.0"` 
-    - (Type ID required for struct/union only) 
- - `0x06` Field Count (size-encoded = 6 fields)
- - FIELD 1: "value"
-    - `0x05 76 61 6c 75 65` Field name
-      - `5` characters `"value"`
-    - `0x43` TypeCode for **scalar double**: `0b01000 011` (`kind=010` floating point + `00` non-array + `011` double)
-    - Optional: 8-byte value (depending on introspection type)
- - Other Normative Type fields for NTScalar (`descriptor`, `alarm`, `timeStamp`, `display`, `control`)
-    - Each field has its own `Field name`, `TypeCode`, and optional values
-
----
-
-### 8.4 TypeCode Encoding Rules
-
-* **Type ID** is *only* present for `kind=100` **structure/union** (and their arrays) – it is *not* used for scalar or basic arrays
-* **Element Type** appears *only* for arrays of complex kinds; scalar arrays do **not** carry a second FieldDesc
-* **Field Count** is a **Size‑encoded integer** that precedes the repeated `(name + FieldDesc)` list
-* Bounded/fixed arrays of scalars carry a **bound/count Size value**, not a nested FieldDesc
-* The lead‑byte flags, not separate columns, distinguish scalar vs. array and encode signed/unsigned and width for integers
-
-### 8.5 FieldDesc Encoding Examples
-
-**Leaf Node (Scalar):**
-
-| Description       | Protocol |
-|-------------------|----------|
-| TypeCode: int32_t | `0x22`   |
-
-**Wireshark Display:**
+**Bit Ordering**: Bits are processed in depth-first order with LSB-first within each byte:
 ```
-└─ value (0x22: int32_t)
+Input bytes:                0         1          2          3
+Input bit positions:   [01234567] [89012345] [67890123] [45678901]
+                           │         │          │          │
+Maps to output bits:    "76543210" "54321098" "32109876" "10987654"
+                           │         │          │          │
+Byte order in string:      3         2          1          0
 ```
 
-**Simple Structure:**
-
-| Description                        | Protocol | ...                | ... |
-|------------------------------------|----------|--------------------|-----|
-| TypeCode: struct                   | `0x80`   | `0x08` `MyStruct`  |     |
-| Type ID (Size=8 + UTF-8 string)    |          | `0x02`             |     |
-| Field count: 2 fields              |          | `0x06` `field1`    |     |
-| Field name (Size=6 + UTF-8 string) |          | `0x22`             |     |
-| Field type: int32_t                |          | `0x06` `field2`    |     |
-| Field name (Size=6 + UTF-8 string) |          | `0x43`             |     |
-| Field type: double                 |          |                    |     |
-
-**Wireshark Display:**
+**BitSet Bit Reversal Process**:
 ```
-└─ value (0x80: MyStruct)
-   ├─ field1 (0x22: int32_t)
-   └─ field2 (0x43: double)
+Byte 0: b7 b6 b5 b4 b3 b2 b1 b0    →    "76543210"
+Byte 1: b7 b6 b5 b4 b3 b2 b1 b0    →    "54321098" (prepended)
+Result: "5432109876543210"
 ```
 
-**Union:**
+### 9.2 Field Indexing
 
-| Description                         | Protocol | ...                | ... |
-|-------------------------------------|----------|--------------------|-----|
-| TypeCode: union                     | `0x81`   | `0x07` `MyUnion`   |     |
-| Type ID (Size=7 + UTF-8 string)     |          | `0x02`             |     |
-| Choice count: 2 choices             |          | `0x07` `choice1`   |     |
-| Choice name (Size=7 + UTF-8 string) |          | `0x22`             |     |
-| Choice type: int32_t                |          | `0x07` `choice2`   |     |
-| Choice name (Size=7 + UTF-8 string) |          | `0x60`             |     |
-| Choice type: string                 |          |                    |     |
+Fields are indexed using depth-first traversal starting from index 0 (root field):
 
-**Wireshark Display:**
 ```
-└─ value (0x81: MyUnion)
-   ├─ choice1 (0x22: int32_t)
-   └─ choice2 (0x60: string)
-```
-
-**Nested Structure:**
-
-| Description                        | Protocol            | ...               | ...               |
-|------------------------------------|---------------------|-------------------|-------------------|
-| TypeCode: struct                   | `0x80`              |                   |                   |
-| Type ID (Size=9 + UTF-8 string)    | `0x09` `Container`  |                   |                   |
-| Field count: 2 fields              |                     | `0x02`            |                   |
-| Field name (Size=5 + UTF-8 string) |                     | `0x05` `value`    |                   |
-| Field type: uint32_t               |                     | `0x26`            |                   |
-| Field name (Size=5 + UTF-8 string) |                     | `0x05` `alarm`    |                   |
-| Field type: struct (nested)        |                     | `0x80`            |                   |
-| Type ID (Size=7 + UTF-8 string)    |                     | `0x07` `alarm_t`  |                   |
-| Field count: 3 fields              |                     |                   | `0x03`            |
-| Field name (Size=8 + UTF-8 string) |                     |                   | `0x08` `severity` |
-| Field type: int32_t                |                     |                   | `0x22`            |
-| Field name (Size=6 + UTF-8 string) |                     |                   | `0x06` `status`   |
-| Field type: int32_t                |                     |                   | `0x22`            |
-| Field name (Size=7 + UTF-8 string) |                     |                   | `0x07` `message`  |
-| Field type: string                 |                     |                   | `0x60`            |
-
-**Wireshark Display:**
-```
-└─ value (0x80: Container)
-   ├─ value (0x26: uint32_t)
-   └─ alarm (0x80: alarm_t)
-      ├─ severity (0x22: int32_t)
-      ├─ status (0x22: int32_t)
-      └─ message (0x60: string)
+Index  Field Structure
+  0    value (root NTScalar)
+  1    ├─ value (double)  
+  2    ├─ alarm (struct)
+  3    │  ├─ severity (int32_t)
+  4    │  ├─ status (int32_t) 
+  5    │  └─ message (string)
+  6    ├─ timeStamp (struct)
+  7    │  ├─ secondsPastEpoch (int64_t)
+  8    │  ├─ nanoseconds (int32_t)
+  9    │  └─ userTag (int32_t)
 ```
 
-**Structure Array:**
+**Smart BitSet Expansion**: When bit 2 (alarm struct) is set, the dissector automatically sets bits 3-5 for all alarm subfields.
 
-| Description                        | Protocol | ...               |
-|------------------------------------|----------|-------------------|
-| TypeCode: struct array             | `0x88`   |                   |
-| Element type: struct               | `0x80`   | `0x05` `Point`    |
-| Type ID (Size=5 + UTF-8 string)    |          | `0x02`            |
-| Field count: 2 fields              |          | `0x01` `x`        |
-| Field name (Size=1 + UTF-8 string) |          | `0x22`            |
-| Field type: int32_t                |          | `0x01` `y`        |
-| Field name (Size=1 + UTF-8 string) |          | `0x22`            |
-| Field type: int32_t                |          |                   |
+### 9.3 Wireshark Display Integration
 
-**Wireshark Display:**
+**BitSet Display**:
 ```
-└─ value (0x88: Point[])
-   ├─ x (0x22: int32_t)
-   └─ y (0x22: int32_t)
+├─ Changed BitSet (2 bytes): 10000101
+├─ Effective:               11111111
 ```
 
-### 8.6 Tree Traversal
-
-Nodes are serialized **depth‑first**; receivers rebuild the hierarchy recursively.
-
-FieldDesc trees are:
-- **Serialized depth-first**: Children before siblings
-- **Parsed recursively**: Receivers rebuild the hierarchy
-- **Cached by connection**: Each connection maintains its own type cache
-
-### 8.7 Type‑cache shortcuts
-
-To avoid re‑sending large type trees, PVXS supports the PVAccess **type‑cache op‑codes**:
-- *`0xFD key FieldDesc`* → *store in cache*
-- *`0xFE key`* → *reuse cached tree* (key is 16‑bit)
-
-These are handled transparently by PVXS (`from_wire()` in `dataencode.cpp`) and rarely appear in user captures.
-
----
-
-## 9. Value (PVField) Serialization
-
-Given a `FieldDesc` the **value stream** that immediately follows is:
-
-| Type class                | Wire encoding (per element)                                                              |
-|---------------------------|------------------------------------------------------------------------------------------|
-| **bool**                  | 1 byte; 0 / 1                                                                            |
-| **{u,}int8**              | 1 byte two's‑complement / unsigned                                                       |
-| **{u,}int16**             | 2 bytes                                                                                  |
-| **{u,}int32**             | 4 bytes                                                                                  |
-| **{u,}int64**             | 8 bytes                                                                                  |
-| **float**                 | 4 bytes IEEE-754                                                                         |
-| **double**                | 8 bytes IEEE-754                                                                         |
-| **string**                | *Size* + UTF‑8 bytes                                                                     |
-| **scalar array**          | *Size* (#elems) + packed elements                                                        |
-| **string array**          | *Size* (#elems) + repeated (*Size + UTF‑8*)                                              |
-| **structure**             | Concatenation of each member's PVField in declaration order                              |
-| **union**                 | *Selector* (−1 = empty) then the selected member's PVField                               |
-| **any**                   | *TypeDesc* (or cache ref) + PVField                                                      |
-| **structure/union array** | *Size* (#elems) then repeated **[Selector + PVField]** (union) or **[PVField]** (struct) |
-
-> All multi‑byte scalars use the **byte‑order flag** negotiated in the message header.
-
-### 9.1 Union Encoding Details
-
-- **Selector**: Union discriminator indicating which union member is present
-- **Value**: Followed by that member's data
-- **Critical Finding**: Selectors are field indices, not type codes
+Shows both the original received bitset and the expanded effective bitset after automatic child field inclusion.
 
 ---
 
@@ -871,7 +862,7 @@ The *n*‑th bit set to `1` means "member *n* has been updated and its PVField a
 Unset bits indicate that the receiver should reuse its cached copy of that member.
 Bit numbering matches the depth‑first order of the `FieldDesc` tree.
 
-Example of breadth-first numbering used by `BitSet` fpr `NTScalar double`:
+Example of depth-first numbering used by `BitSet` for `NTScalar double`:
 
 ```text
 0 value  (double)
@@ -1235,7 +1226,7 @@ Arrays are fundamental to PVA protocol design. All basic types can be arrays:
 
 ## 14. Inter‑operability Notes
 
-* PVXS **never transmits fixed‑length strings or fixed‑width arrays**, even though the pvData type table reserves bit 4 of the TypeCode for such encodings (they are deprecated). Receivers should still reject TypeCodes with bit 4 set.
+* The dissector supports all standard PVA array types: variable, bounded, and fixed arrays. Array types are determined by bits 4-3 of the TypeCode using bitwise operations.
 * A single TCP connection may carry **multiple cached type trees**; each tree is keyed by the server‑assigned *TypeCache ID* (16‑bit).
 * **ChangedBitSet + value** pairs are always aligned directly after the status field—there is no padding beyond the segmentation rules described in Section 1.
 * Scalar values are transmitted in **native IEEE**; PVAccess performs no NaN canonicalisation—dissectors should preserve bit‑patterns.
