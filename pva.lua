@@ -219,8 +219,8 @@ local nt_types = {
 -----------------------------------------------
 
 local TYPE_CODE_NULL = 0xFF;           -- NULL_TYPE: null field
-local TYPE_CODE_ONLY_ID = 0xFE;        -- ONLY_ID: 0xFE + ID (2 bytes)
-local TYPE_CODE_FULL_WITH_ID = 0xFD;   -- FULL_WITH_ID: 0xFD + ID (2 bytes) + FieldDesc
+local TYPE_CODE_ONLY_ID = 0xFE;        -- TYPE_CODE_ONLY_ID: 0xFE + ID (2 bytes)
+local TYPE_CODE_FULL_WITH_ID = 0xFD;   -- TYPE_CODE_FULL_WITH_ID: 0xFD + ID (2 bytes) + FieldDesc
 local TYPE_CODE_TAGGED_ID = 0xFC;      -- FULL_TAGGED_ID: 0xFC + ID (2 bytes) + tag [ Undecoded in this lua ]
 local TYPE_CODE_RAW = 0xDF;            -- FieldDesc
 
@@ -243,6 +243,7 @@ local TYPE_CODE_RAW = 0xDF;            -- FieldDesc
 -----------------------------------------------
 --- @param type_code number the field type code
 --- @return boolean true if the field is a null
+----------------------------------------------
 function isNull(type_code)
     return type_code == TYPE_CODE_NULL
 end
@@ -253,6 +254,7 @@ end
 -----------------------------------------------
 --- @param type_code number the field type code
 --- @return boolean true if the field is determined by only an id
+----------------------------------------------
 function isOnlyId(type_code)
     return type_code == TYPE_CODE_ONLY_ID
 end
@@ -263,6 +265,7 @@ end
 -----------------------------------------------
 --- @param type_code number the field type code
 --- @return boolean true if the field is determined by providing a declaration and id to store it against
+----------------------------------------------
 function isFullWithId(type_code)
     return type_code == TYPE_CODE_FULL_WITH_ID
 end
@@ -273,6 +276,7 @@ end
 -----------------------------------------------
 --- @param type_code number the field type code
 --- @return boolean true if the field is determined by providing a declaration, and and id, and tag to store it against
+----------------------------------------------
 function isFullTaggedWithId(type_code)
     return type_code == TYPE_CODE_FULL_AND_TAGGED_WITH_ID
 end
@@ -286,6 +290,7 @@ end
 -----------------------------------------------
 --- @param type_code number the field type code
 --- @return boolean true if the field is a full field
+----------------------------------------------
 function isFull(type_code)
     return type_code < TYPE_CODE_RAW
 end
@@ -308,6 +313,7 @@ end
 -----------------------------------------------
 --- @param type_code number the field type code
 --- @return boolean true if the field is a boolean type
+----------------------------------------------
 function isBoolType(type_code)
     return bit.band(type_code, 0xE0) == 0x00
 end
@@ -317,6 +323,7 @@ end
 -----------------------------------------------
 --- @param type_code number the field type code
 --- @return boolean true if the field is an integer type
+----------------------------------------------
 function isIntType(type_code)
     return bit.band(type_code, 0xE0) == 0x20
 end
@@ -326,6 +333,7 @@ end
 -----------------------------------------------
 --- @param type_code number the field type code
 --- @return boolean true if the field is a float type
+----------------------------------------------
 function isFloatType(type_code)
     return bit.band(type_code, 0xE0) == 0x40
 end
@@ -335,6 +343,7 @@ end
 -----------------------------------------------
 --- @param type_code number the field type code
 --- @return boolean true if the field is a string type
+----------------------------------------------
 function isStringType(type_code)
     return bit.band(type_code, 0xE0) == 0x60
 end
@@ -344,6 +353,7 @@ end
 -----------------------------------------------
 --- @param type_code number the field type code
 --- @return boolean true if the field is a complex type
+----------------------------------------------
 function isComplexType(type_code)
     return bit.band(type_code, 0xE0) == 0x80
 end
@@ -362,6 +372,7 @@ end
 -----------------------------------------------
 --- @param type_code number the field type code
 --- @return boolean true if the field is an array
+----------------------------------------------
 function isArrayType(type_code)
     return bit.band(type_code, 0x18) ~= 0
 end
@@ -371,6 +382,7 @@ end
 -----------------------------------------------
 --- @param type_code number the field type code
 --- @return boolean true if the field is a variable array
+----------------------------------------------
 function isVariableArrayType(type_code)
     return bit.band(type_code, 0x18) == 0x08
 end
@@ -380,6 +392,7 @@ end
 -----------------------------------------------
 --- @param type_code number the field type code
 --- @return boolean true if the field is a bounded array
+----------------------------------------------
 function isBoundedArrayType(type_code)
     return bit.band(type_code, 0x18) == 0x10
 end
@@ -389,6 +402,7 @@ end
 -----------------------------------------------
 --- @param type_code number the field type code
 --- @return boolean true if the field is a fixed array
+----------------------------------------------
 function isFixedArrayType(type_code)
     return bit.band(type_code, 0x18) == 0x18
 end
@@ -416,6 +430,7 @@ end
 -----------------------------------------------
 --- @param type_code number the field type code
 --- @return number the length of the integer type
+----------------------------------------------
 function getIntLen(type_code)
     local b = bit.band(type_code, 0x03)  -- Extract bits 1-0 (not 2-1!)
     return b == 0x00 and 8 or b == 0x01 and 16 or b == 0x02 and 32 or 64
@@ -427,6 +442,7 @@ end
 -----------------------------------------------
 --- @param type_code number the field type code
 --- @return boolean true if the integer type is signed
+----------------------------------------------
 function isIntSigned(type_code)
     return bit.band(type_code, 0x04) == 0
 end
@@ -437,6 +453,7 @@ end
 -----------------------------------------------
 --- @param type_code number the field type code
 --- @return string the name of the integer type
+----------------------------------------------
 function getIntName(type_code)
     local b = isIntSigned(type_code) and "int" or "uint"
     return b .. getIntLen(type_code) .. "_t"
@@ -456,6 +473,7 @@ end
 -----------------------------------------------
 --- @param type_code number the field type code
 --- @return number the length of the float type
+----------------------------------------------
 function getFloatLen(type_code)
     local b = bit.band(type_code, 0x07)
     return b == 0x02 and 32 or 64
@@ -466,6 +484,7 @@ end
 -----------------------------------------------
 --- @param type_code number the field type code
 --- @return string the name of the float type
+----------------------------------------------
 function getFloatName(type_code)
     local b = bit.band(type_code, 0x07)
     return b == 0x02 and "float" or "double"
@@ -491,6 +510,7 @@ end
 -----------------------------------------------
 --- @param type_code number the field type code
 --- @return string the name of the complex type
+----------------------------------------------
 function getComplexName(type_code)
     local b = bit.band(type_code, 0x07)
     return b == 0x00 and "struct" or b == 0x01 and "union" or b == 0x02 and "any" or "fixed_string"
@@ -507,6 +527,7 @@ end
 -----------------------------------------------
 --- @param type_code number the field type code
 --- @return string the type name of the field
+----------------------------------------------
 function getTypeName(type_code)
     return isBoolType(type_code) and "bool" or isIntType(type_code) and getIntName(type_code) or isFloatType(type_code) and getFloatName(type_code) or isStringType(type_code) and "string" or getComplexName(type_code)
 end
@@ -518,6 +539,7 @@ end
 --- @param field_name string the name of the field, defaults to value if not specified
 --- @param type_name string the optional "Type ID" or Normative Type string to use for complex types
 --- @return string the formatted field name and type
+----------------------------------------------
 function formatField(type_code, field_name, type_name)
     local a = isArrayType(type_code) and "[]" or ""
 
@@ -551,13 +573,15 @@ FieldRegistry.roots = {}
 --- Get the root field for a request
 -----------------------------------------------
 --- @param request_id number the request_id to get the root field for
---- @return table the root field for the request
+--- @return table the root field for the request_id
+----------------------------------------------
 function FieldRegistry:getRootField(request_id)
     return self.roots[request_id]
 end
 
 -----------------------------------------------
 --- Create a new `Field`
+-----------------------------------------------
 --- - If the `type` name is specified then it is used as the type name of this `Field`.
 --- - If `parent_field` is specified then the newly created `Field` is added as a child of the parent `Field`.
 ---   It is up to the caller to assure that the parent is of the appropriate type to accept children.
@@ -567,6 +591,8 @@ end
 --- @param type string the string name to use as the type
 --- @param len number optional number of elements in a fixed or bounded array
 --- @param parent_field table the optional parent of this field
+--- @return table the new `Field`
+----------------------------------------------
 function FieldRegistry:createField(name, type_code, type, len, parent_field)
     -- Determine the type string
     local type_string = type or getTypeName(type_code)
@@ -593,6 +619,7 @@ end
 
 -----------------------------------------------
 --- Create a new `Field` and add it to the `FieldRegistry` if `request_id` and `field_id` are specified
+-----------------------------------------------
 --- - If `request_id` and  `field_id` are provided then new `Field` is added to the `FieldRegistry` .
 -----------------------------------------------
 --- @param name string the field name
@@ -602,6 +629,8 @@ end
 --- @param parent_field table the optional parent of this field, nil to specify a root Field
 --- @param request_id number the storage of fields in the `FieldRegistry` is partitioned by `request_id`
 --- @param field_id number the identifier of a `Field` specified in the PVAccess protocol
+--- @return table the new `Field` or nil if `request_id` and `field_id` are not provided
+----------------------------------------------
 function FieldRegistry:addField(name, type_code, type, len, parent_field, request_id, field_id)
     local field = self:createField(name, type_code, type, len, parent_field)
 
@@ -627,11 +656,13 @@ end
 
 ----------------------------------------------
 --- Get a Field from the Field Registry
+----------------------------------------------
 --- Retrieves a Field identified by the given field_id from the given request_id partition of the Field Registry
 ----------------------------------------------
 --- @param request_id number the request_id to get the field for
 --- @param field_id number the field_id to get the field for
 --- @return table the field for the request_id and field_id
+----------------------------------------------
 function FieldRegistry:getField(request_id, field_id)
     return request_id and field_id and self.data and self.data[request_id] and self.data[request_id][field_id]
 end
@@ -641,6 +672,7 @@ end
 ----------------------------------------------
 --- @param field table the parent Field to get the sub-Fields of
 --- @return table the sub-fields of the given Field
+----------------------------------------------
 function FieldRegistry:getSubFields(field)
     return field.sub_fields
 end
@@ -650,6 +682,7 @@ end
 ----------------------------------------------
 --- @param request_id number the request_id to get the fields for
 --- @return table the fields of the given request_id
+----------------------------------------------
 function FieldRegistry:getFields(request_id)
     return self.data[request_id] or {}
 end
@@ -659,8 +692,12 @@ end
 ----------------------------------------------
 --- @param request_id number the request_id to fill out the bitset for
 --- @param bitset_str string the bitset string to fill out
+----------------------------------------------
 function FieldRegistry:fillOutIndexes(request_id, bitset_str)
-    -- Local recursive function to count all fields and subfields
+
+    -- subFieldCount: count all fields and subfields
+    -- @param field table the field to count the subfields for
+    -- @return number the total number of fields and subfields
     local function subFieldCount(field)
         if not field or not field.sub_fields or #field.sub_fields == 0 then
             return 1
@@ -673,10 +710,9 @@ function FieldRegistry:fillOutIndexes(request_id, bitset_str)
         return total
     end
 
-    -----------------------------------------------
-    -- Local function to count all fields and subfields
-    -----------------------------------------------
-    ---@param id number the request id to count the fields for
+    -- getFullCount: count all fields and subfields
+    -- @param id number the request id to count the fields for
+    -- @return number the total number of fields and subfields
     local function getFullCount(id)
         return subFieldCount(FieldRegistry:getRootField(id))
     end
@@ -731,6 +767,7 @@ end
 --- @param request_id number the request_id to search in
 --- @param index number the zero-based index of the field to retrieve
 --- @return table field the found Field
+----------------------------------------------
 function FieldRegistry:getIndexed(request_id, index)
     local root_field = self.roots[request_id]
 
@@ -770,6 +807,7 @@ end
 ----------------------------------------------
 --- @param request_id number the request_id to get the full bit set for
 --- @return string the full bit set for the request_id
+----------------------------------------------
 function FieldRegistry:getFullBitSet(request_id)
     local root_field = self.roots[request_id]
     if not root_field then return nil end
@@ -790,6 +828,7 @@ end
 
 ----------------------------------------------
 --- Get a field by depth-first index within an request_id
+----------------------------------------------
 --- - Starts at the root of a request_id and traverses the field graph depth first.
 --- - It indexes fields it finds from 0 (root)
 --- List of Fields, ... can be used to reconstruct tree for display
@@ -797,6 +836,7 @@ end
 --- @param request_id number the request_id to search in
 --- @param index number the zero-based index of the field to retrieve
 --- @return table a List of Fields from the root to the found field
+----------------------------------------------
 function FieldRegistry:getIndexedField(request_id, index)
     local root_field = self.roots[request_id]
     if not root_field then return nil end
@@ -840,6 +880,7 @@ end
 
 ----------------------------------------------
 --- bufToBinary: get an binary string of digits from buffer.
+----------------------------------------------
 --- Bits are serialised least-significant bit first within each byte
 --- and bytes are sent in ascending order.
 ---
@@ -967,6 +1008,7 @@ end
 --- @param tree table to add the type code to
 --- @return table the remaining buffer
 --- @return number the type code
+----------------------------------------------
 local function pvaDecodeTypeCode(buf, tree)
     if buf:len() < 1 then
         tree:add_expert_info(PI_MALFORMED, PI_ERROR, "PVData Type Code: Truncated")
@@ -984,13 +1026,13 @@ end
 
 
 ----------------------------------------------
--- decodeString: extract a string and return that string, and the remaining buffer
--- string is encoded as a size followed by the actual string
+--- decodeString: extract a string and return that string, and the remaining buffer
+--- string is encoded as a size followed by the actual string
 ----------------------------------------------
--- @param buf: the buffer to decode from
--- @param is_big_endian: true if the buffer is big endian
--- @return string the string
--- @return table the remaining buffer
+--- @param buf: the buffer to decode from
+--- @param is_big_endian: true if the buffer is big endian
+--- @return string the string
+--- @return table the remaining buffer
 ----------------------------------------------
 local function decodeString(buf, is_big_endian)
     if not buf or buf:len() == 0 then
@@ -1025,6 +1067,7 @@ end
 --- @param type_code number the type code
 --- @return string the string representation of the data
 --- @return number the number of bytes the data took on the wire
+----------------------------------------------
 function getDataForType(buf, is_big_endian, type_code)
     -- only for bool, int, float, and string scalars
     local value = ""
@@ -1071,6 +1114,7 @@ end
 --- @param label string the label to use for the data any label for the data that has been determined before (defaults to "value")
 --- @param len number the length of the data to read from the buffer
 --- @return table the remaining buffer
+----------------------------------------------
 function displayDataForType(buf, is_big_endian, type_code, tree, label, len)
     -- only for non complex types
     local value
@@ -1124,6 +1168,7 @@ end
 --- @param extras string the extras to add to the field name e.g. where to store the field (→2) or where to retrieve the field (←2)
 --- @return table the field
 --- @return table the remaining buffer
+----------------------------------------------
 local function pvaDecodeIntrospectionData(buf, tree, is_big_endian, request_id, name, parent_field, sub_type_id_buf, extras)
     display = display or true
     extras = extras or ""
@@ -1176,7 +1221,7 @@ local function pvaDecodeIntrospectionData(buf, tree, is_big_endian, request_id, 
     -- if the type code is a full field definition, then we need to decode the field definition from the buffer
     if is_f or is_f_id or is_ft_id then
         if is_f then
-            -- if this is a full field definition, then use this `type_code` as a raw Field definition (fieldDesc)
+            -- if this is a full field definition, then use this `TypeCode` as a raw Field definition (fieldDesc)
             field_desc = type_code
         elseif is_f_id or is_ft_id then
             -- otherwise, if this is a full field definition with ID we still need to get the actual fieldDesc from the buffer
@@ -1257,6 +1302,7 @@ end
 
 ----------------------------------------------
 --- pruneUncommonRoots: prune the trees that are not common to to both the
+----------------------------------------------
 --- current field path and the previous field path.
 --- This is used when we encounter a new field with different parents and we need
 --- to know where to attach the new tree.
@@ -1298,6 +1344,7 @@ end
 
 ----------------------------------------------
 --- addRequiredRoot: add a new tree to the trees list
+----------------------------------------------
 --- Only add a new tree if the current field position (depth) is
 --- not the same as the tree-depth we've already deployed.
 --- This means that we won't add a new tree when its already added.
@@ -1307,6 +1354,7 @@ end
 --- @param trees table the trees to add the new tree to
 --- @param current_field_pos number the current field position
 --- @param label string the label to add to the tree
+----------------------------------------------
 function addRequiredRoot(buf, trees, current_field_pos, label)
     local trees_len = #trees
     if trees_len ~= current_field_pos then
@@ -1328,6 +1376,7 @@ end
 --- @param is_big_endian boolean is the byte stream big endian
 --- @param request_id number the request id
 --- @param bitset_str string the bitset to decode
+----------------------------------------------
 function decodePVField(buf, root_tree, is_big_endian, request_id, bitset_str)
     local root_field = FieldRegistry:getRootField(request_id)
     if not root_field then return end
@@ -1394,6 +1443,7 @@ end
 
 ----------------------------------------------
 --- pvaDecodePVData: decode the given message body into the given packet and root tree node
+----------------------------------------------
 --- Use the given bitset to select which fields to display
 --- The bitset sometimes does not contain all the field set for complex types with sub-fields
 --- so we expand the bitset to include all the fields using FieldRegistry:fillOutIndexes
@@ -1404,6 +1454,7 @@ end
 --- @param is_big_endian boolean is the byte stream big endian
 --- @param request_id: the request id
 --- @param bitset: the bitset to decode
+----------------------------------------------
 function pvaDecodePVData(buf, tree, is_big_endian, request_id, bitset)
     local bitset_str = ""
     if bitset then
@@ -1432,6 +1483,7 @@ end
 --- @return number the request id
 --- @return number the sub command
 --- @return table the remaining buffer
+----------------------------------------------
 local function decodeSubCommand(buf, pkt, tree, is_big_endian, cmd, for_client)
     local sid, request_id
 
@@ -1482,10 +1534,12 @@ end
 
 ----------------------------------------------
 --- skipNextElement: skip the next element and return the remaining buffer
+--- read the size of the element then skip that many bytes
 ----------------------------------------------
 --- @param buf: the buffer to decode from
 --- @param is_big_endian: true if the buffer is big endian
---- @return table the remaining buffer
+--- @return table the remaining buffer or nil if this is the last element
+----------------------------------------------
 local function skipNextElement(buf, is_big_endian)
     local len, remaining_buf = decodeSize(buf, is_big_endian)
     return len ~= remaining_buf:len() and remaining_buf(len + 1) or nil
@@ -1495,7 +1549,13 @@ end
 -- PVData decoders
 ----------------------------
 
--- Helper function to identify authentication method strings
+----------------------------------------------
+--- isAuthMethod: Helper function to identify authentication method strings
+----------------------------------------------
+--- @param method_name string the method name to check
+--- @param prev_was_method boolean if the previous was a valid method name
+--- @return boolean true if the given method name is a valid authentication method
+----------------------------------------------
 local function isAuthMethod(method_name, prev_was_method)
     if not method_name then return false end
 
@@ -1517,11 +1577,13 @@ local function isAuthMethod(method_name, prev_was_method)
 end
 
 ----------------------------------------------
--- decodeStatus: decode the given message body to extract the status
+-- decodeStatus: decode the given message body to extract and display the status
 ----------------------------------------------
--- @param buf: the buffer to decode from
--- @param tree: the tree node to decode into
--- @param is_big_endian is the byte stream big endian
+--- @param buf: the buffer to read the status from
+--- @param tree: the tree node to display the status in
+--- @param is_big_endian is the byte stream big endian
+--- @return table the remaining buffer after reading the status
+----------------------------------------------
 local function decodeStatus (buf, tree, is_big_endian)
     local status_code = buf(0,1):uint()
     local sub_tree = tree:add(fstatus, buf(0,1))
@@ -1549,10 +1611,11 @@ end
 ----------------------------------------------
 -- pvaClientSearchDecoder: decode the given message body into the given packet and root tree node
 ----------------------------------------------
--- @param buf: the buffer to decode from
--- @param pkt: the packet to decode into
--- @param tree: the tree node to decode into
--- @param is_big_endian is the byte stream big endian
+--- @param buf: the buffer to decode from
+--- @param pkt: the packet to decode into
+--- @param tree: the tree node to decode into
+--- @param is_big_endian is the byte stream big endian
+----------------------------------------------
 local function pvaClientSearchDecoder (buf, pkt, tree, is_big_endian)
     local SEARCH_HEADER_SIZE = 26
     local raw_sequence_number = buf(0,4)
@@ -1601,12 +1664,12 @@ local function pvaClientSearchDecoder (buf, pkt, tree, is_big_endian)
 end
 
 ----------------------------------------------
--- pvaServerBeaconDecoder: decode the given message body into the given packet and root tree node
+--- pvaServerBeaconDecoder: decode the given message body into the given packet and root tree node
 ----------------------------------------------
--- @param buf: the buffer to decode from
--- @param pkt: the packet to decode into
--- @param tree: the tree node to decode into
--- @param is_big_endian is the byte stream big endian
+--- @param buf: the buffer to decode from
+--- @param pkt: the packet to decode into
+--- @param tree: the tree node to decode into
+--- @param is_big_endian is the byte stream big endian
 ----------------------------------------------
 local function pvaServerBeaconDecoder (buf, pkt, tree, is_big_endian)
     local raw_beacon_header = buf(0,12)
@@ -1627,12 +1690,12 @@ local function pvaServerBeaconDecoder (buf, pkt, tree, is_big_endian)
 end
 
 ----------------------------------------------
--- pvaServerSearchResponseDecoder: decode the given message body into the given packet and root tree node
+--- pvaServerSearchResponseDecoder: decode the given message body into the given packet and root tree node
 ----------------------------------------------
--- @param buf: the buffer to decode from
--- @param pkt: the packet to decode into
--- @param tree: the tree node to decode into
--- @param is_big_endian is the byte stream big endian
+--- @param buf: the buffer to decode from
+--- @param pkt: the packet to decode into
+--- @param tree: the tree node to decode into
+--- @param is_big_endian is the byte stream big endian
 ----------------------------------------------
 local function pvaServerSearchResponseDecoder (buf, pkt, tree, is_big_endian)
     local sequence_number = getUint(buf(12,4), is_big_endian)
@@ -1665,12 +1728,12 @@ local function pvaServerSearchResponseDecoder (buf, pkt, tree, is_big_endian)
 end
 
 ----------------------------------------------
--- pvaClientValidateDecoder: decode the given message body into the given packet and root tree node
+--- pvaClientValidateDecoder: decode the given message body into the given packet and root tree node
 ----------------------------------------------
--- @param buf: the buffer to decode from
--- @param pkt: the packet to decode into
--- @param tree: the tree node to decode into
--- @param is_big_endian is the byte stream big endian
+--- @param buf: the buffer to decode from
+--- @param pkt: the packet to decode into
+--- @param tree: the tree node to decode into
+--- @param is_big_endian is the byte stream big endian
 ----------------------------------------------
 local function pvaClientValidateDecoder (buf, pkt, tree, is_big_endian)
     pkt.cols.info:append("CONNECTION_VALIDATION, ")
@@ -1779,12 +1842,12 @@ local function pvaClientValidateDecoder (buf, pkt, tree, is_big_endian)
 end
 
 ----------------------------------------------
--- pvsServerValidateDecoder: decode the given message body into the given packet and root tree node
+--- pvsServerValidateDecoder: decode the given message body into the given packet and root tree node
 ----------------------------------------------
--- @param buf: the buffer to decode from
--- @param pkt: the packet to decode into
--- @param tree: the tree node to decode into
--- @param is_big_endian is the byte stream big endian
+--- @param buf: the buffer to decode from
+--- @param pkt: the packet to decode into
+--- @param tree: the tree node to decode into
+--- @param is_big_endian is the byte stream big endian
 ----------------------------------------------
 local function pvsServerValidateDecoder (buf, pkt, tree, is_big_endian)
     pkt.cols.info:append("CONNECTION_VALIDATION, ")
@@ -1877,12 +1940,12 @@ local function pvsServerValidateDecoder (buf, pkt, tree, is_big_endian)
 end
 
 ----------------------------------------------
--- pvaClientCreateChannelDecoder: decode the given message body into the given packet and root tree node
+--- pvaClientCreateChannelDecoder: decode the given message body into the given packet and root tree node
 ----------------------------------------------
--- @param buf: the buffer to decode from
--- @param pkt: the packet to decode into
--- @param tree: the tree node to decode into
--- @param is_big_endian is the byte stream big endian
+--- @param buf: the buffer to decode from
+--- @param pkt: the packet to decode into
+--- @param tree: the tree node to decode into
+--- @param is_big_endian is the byte stream big endian
 ----------------------------------------------
 local function pvaClientCreateChannelDecoder (buf, pkt, tree, is_big_endian)
     pkt.cols.info:append("CREATE_CHANNEL(")
@@ -1905,12 +1968,12 @@ local function pvaClientCreateChannelDecoder (buf, pkt, tree, is_big_endian)
 end
 
 ----------------------------------------------
--- pvaServerCreateChannelDecoder: decode the given message body into the given packet and root tree node
+--- pvaServerCreateChannelDecoder: decode the given message body into the given packet and root tree node
 ----------------------------------------------
--- @param buf: the buffer to decode from
--- @param pkt: the packet to decode into
--- @param tree: the tree node to decode into
--- @param is_big_endian is the byte stream big endian
+--- @param buf: the buffer to decode from
+--- @param pkt: the packet to decode into
+--- @param tree: the tree node to decode into
+--- @param is_big_endian is the byte stream big endian
 ----------------------------------------------
 local function pvaServerCreateChannelDecoder (buf, pkt, tree, is_big_endian)
     local cid = getUint64(buf, is_big_endian)
@@ -1922,13 +1985,13 @@ local function pvaServerCreateChannelDecoder (buf, pkt, tree, is_big_endian)
 end
 
 ----------------------------------------------
--- pvaDestroyChannelDecoder: decode the given message body into the given packet and root tree node
+--- pvaDestroyChannelDecoder: decode the given message body into the given packet and root tree node
 ----------------------------------------------
--- @param buf: the buffer to decode from
--- @param pkt: the packet to decode into
--- @param tree: the tree node to decode into
--- @param is_big_endian is the byte stream big endian
--- @param cmd the command number
+--- @param buf: the buffer to decode from
+--- @param pkt: the packet to decode into
+--- @param tree: the tree node to decode into
+--- @param is_big_endian is the byte stream big endian
+--- @param cmd the command number
 ----------------------------------------------
 local function pvaDestroyChannelDecoder (buf, pkt, tree, is_big_endian, _)
     local cid = getUint64(buf, is_big_endian)
@@ -1939,13 +2002,13 @@ local function pvaDestroyChannelDecoder (buf, pkt, tree, is_big_endian, _)
 end
 
 ----------------------------------------------
--- pvaClientDestroyDecoder: decode the given message body into the given packet and root tree node
+--- pvaClientDestroyDecoder: decode the given message body into the given packet and root tree node
 ----------------------------------------------
--- @param buf: the buffer to decode from
--- @param pkt: the packet to decode into
--- @param tree: the tree node to decode into
--- @param is_big_endian is the byte stream big endian
--- @param cmd the command number
+--- @param buf: the buffer to decode from
+--- @param pkt: the packet to decode into
+--- @param tree: the tree node to decode into
+--- @param is_big_endian is the byte stream big endian
+--- @param cmd the command number
 ----------------------------------------------
 local function pvaClientDestroyDecoder (buf, pkt, tree, is_big_endian, cmd)
     local command_name = application_messages[cmd]
@@ -1957,13 +2020,13 @@ local function pvaClientDestroyDecoder (buf, pkt, tree, is_big_endian, cmd)
 end
 
 ----------------------------------------------
--- pvaGenericClientOpDecoder: decode the given message body into the given packet and root tree node
+--- pvaGenericClientOpDecoder: decode the given message body into the given packet and root tree node
 ----------------------------------------------
--- @param buf: the buffer to decode from
--- @param pkt: the packet to decode into
--- @param tree: the tree node to decode into
--- @param is_big_endian is the byte stream big endian
--- @param cmd the command number
+--- @param buf: the buffer to decode from
+--- @param pkt: the packet to decode into
+--- @param tree: the tree node to decode into
+--- @param is_big_endian is the byte stream big endian
+--- @param cmd the command number
 ----------------------------------------------
 local function pvaGenericClientOpDecoder (buf, pkt, tree, is_big_endian, cmd)
     local sub_command, request_id, bitset
@@ -1994,13 +2057,13 @@ end
 
 
 ----------------------------------------------
--- pvaGenericServerOpDecoder: decode the given message body into the given packet and root tree node
+--- pvaGenericServerOpDecoder: decode the given message body into the given packet and root tree node
 ----------------------------------------------
--- @param buf: the buffer to decode from
--- @param pkt: the packet to decode into
--- @param tree: the tree node to decode into
--- @param is_big_endian is the byte stream big endian
--- @param cmd the command number
+--- @param buf: the buffer to decode from
+--- @param pkt: the packet to decode into
+--- @param tree: the tree node to decode into
+--- @param is_big_endian is the byte stream big endian
+--- @param cmd the command number
 ----------------------------------------------
 local function pvaGenericServerOpDecoder (buf, pkt, tree, is_big_endian, cmd)
     local sub_command, request_id, bitset
@@ -2033,6 +2096,9 @@ local function pvaGenericServerOpDecoder (buf, pkt, tree, is_big_endian, cmd)
     end
 end
 
+----------------------------------------------
+--- server_cmd_handler: the server message command handler mappings
+----------------------------------------------
 local server_cmd_handler = {
     [BEACON_MESSAGE] =                  pvaServerBeaconDecoder,
     [CONNECTION_VALIDATION_MESSAGE] =   pvsServerValidateDecoder,
@@ -2047,6 +2113,9 @@ local server_cmd_handler = {
     [RPC_MESSAGE] =                     pvaGenericServerOpDecoder,
 }
 
+----------------------------------------------
+--- client_cmd_handler: the client message command handler mappings
+----------------------------------------------
 local client_cmd_handler = {
     [CONNECTION_VALIDATION_MESSAGE] =   pvaClientValidateDecoder,
     [SEARCH_MESSAGE] =                  pvaClientSearchDecoder,
@@ -2063,12 +2132,12 @@ local client_cmd_handler = {
 }
 
 ----------------------------------------------
--- decode: decode the given buffer into the given packet and root tree node
+--- decode: decode the given buffer into the given packet and root tree node
 ----------------------------------------------
--- @param buf: the buffer to decode from
--- @param pkt: the packet to decode into
--- @param root: the root tree node to decode into
--- @return the number of bytes consumed
+--- @param buf: the buffer to decode from
+--- @param pkt: the packet to decode into
+--- @param root: the root tree node to decode into
+--- @return the number of bytes consumed
 ----------------------------------------------
 local function decode(buf, pkt, root)
     -- minimum of 8 byte header
@@ -2187,12 +2256,12 @@ local function decode(buf, pkt, root)
 end
 
 ----------------------------------------------
--- dissector: the dissector function
--- Implementation of the PVA disector
+--- dissector: the dissector function
+--- Implementation of the PVA disector
 ----------------------------------------------
--- @param buf: the buffer to decode from
--- @param pkt: the packet to decode into
--- @param root: the root tree node to decode into
+--- @param buf: the buffer to decode from
+--- @param pkt: the packet to decode into
+--- @param root: the root tree node to decode into
 ----------------------------------------------
 function pva.dissector (buf, pkt, root)
     -- must start with magic

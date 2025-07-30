@@ -348,53 +348,55 @@ sub‑commands are in **byte 0** of payload.  Most channel operations use the fo
 #### 4.4.1 Client GET (INIT) NTScalar Double
 
 **Wireshark Display:**
+
+> Note here that the type ID's are shown with `→ 1` notation
+
 ```
-└─ Process Variable Access Protocol
-   ├─ Magic: 0xCA
+└─ Process Variable Access
+   ├─ Magic: 0xca
    ├─ Version: 2
-   ├─ Flags: 0x00
-   │  ├─ Direction: client (0)
-   │  ├─ Byte order: LSB (0)
-   │  └─ Message type: Application (0)
-   ├─ Command: Channel Get (0x0A)
-   ├─ Payload Size: 9
-   ├─ Server Channel ID: 1005
-   ├─ Operation ID: 1001
-   ├─ Sub-command: 0x00
-   │  ├─ Init: No (0)
-   │  ├─ Destroy: No (0)
-   │  └─ Process: No (0)
-   └─ value (0x80: NTScalar)
+   ├─ Flags: 0x40
+   │  ├─ Command: MONITOR (0x0d)
+   │  ├─ Size: 487
+   │  └─ Operation ID: 2154848337
+   ├─ Sub-command: 0x08
+   ├─ Status: OK (0xff)
+   ├─ PVData Introspection
+   └─ value (0x80: NTScalar) → 1
       ├─ value (0x43: double)
-      ├─ descriptor (0x60: string)
-      ├─ alarm (0x80: alarm_t)
+      └─ alarm (0x80: alarm_t) → 2
       │  ├─ severity (0x22: int32_t)
       │  ├─ status (0x22: int32_t)
       │  └─ message (0x60: string)
-      ├─ timeStamp (0x80: time_t)
+      ├─ timeStamp (0x80: struct) → 3
       │  ├─ secondsPastEpoch (0x23: int64_t)
       │  ├─ nanoseconds (0x22: int32_t)
       │  └─ userTag (0x22: int32_t)
-      ├─ display (0x80: display_t)
-      │  ├─ double limitLow (0x22: int32_t)
-      │  ├─ double limitHigh (0x22: int32_t)
-      │  ├─ string description (0x22: int32_t)
-      │  ├─ string units (0x22: int32_t)
-      │  ├─ int precision (0x22: int32_t)
-      │  └─ form (0x80: enum_t)
+      ├─ display (0x80: struct) → 4
+      │  ├─ limitLow (0x43: double)
+      │  ├─ limitHigh (0x43: double)
+      │  ├─ description (0x60: string)
+      │  ├─ units (0x60: string)
+      │  ├─ precision (0x22: int32_t)
+      │  └─ form (0x80: enum_t) → 5
       │     ├─ index (0x22: int32_t)
-      │     └─ choices (0x68: string[]): 
-      |         choices[0]: "Default"
-      |         choices[1]: "String" 
-      |         choices[2]: "Binary" 
-      |         choices[3]: "Decimal" 
-      |         choices[4]: "Hex"
-      |         choices[5]: "Exponential"
-      |         choices[6]: "Engineering"
-      └─ control (0x80: control_t)
-         ├─ limitLow (0x43: double)
-         ├─ limitHigh (0x43: double)
-         └─ minStep (0x43: double)
+      │     └─ choices[] (0x68: string[])
+      ├─ control (0x80: control_t) → 6
+      │  ├─ limitLow (0x43: double)
+      │  ├─ limitHigh (0x43: double)
+      │  └─ minStep (0x43: double)
+      └─ valueAlarm (0x80: valueAlarm_t) → 7
+         ├─ active (0x00: bool)
+         ├─ lowAlarmLimit (0x43: double)
+         ├─ lowWarningLimit (0x43: double)
+         ├─ highWarningLimit (0x43: double)
+         ├─ highAlarmLimit (0x43: double)
+         ├─ lowAlarmSeverity (0x22: int32_t)
+         ├─ lowWarningSeverity (0x22: int32_t)
+         ├─ highWarningSeverity (0x22: int32_t)
+         ├─ highAlarmSeverity (0x22: int32_t)
+         └─ hysteresis (0x20: int8_t)
+
 ```
 
 #### 4.4.2 Client GET Simple Scalar Byte
@@ -444,7 +446,6 @@ sub‑commands are in **byte 0** of payload.  Most channel operations use the fo
    └─ value (0x22: int32_t): 1234
 ```
 
-
 ---
 
 ## 5. Status & Error Model
@@ -483,11 +484,11 @@ Either layer may be omitted when the peer already caches that information (see t
 
 The **Size** encoding uses a 3-tier scheme to efficiently represent values from 0 to 2^63-1:
 
-| First byte on wire               | Total bytes on wire | Value range represented                   | Notes                                                                                              |
-|----------------------------------|---------------------|-------------------------------------------|----------------------------------------------------------------------------------------------------|
-| `0x00` … `0xFE`                  | 1 byte              | 0 – 254                                   | Value is the byte itself                                                                           |
-| `0xFF` + 4-byte N                | 5 bytes             | 255 – 2,147,483,646                       | N is signed 32-bit little-endian; MUST be < 2^31-1                                                 |
-| `0xFF` + `0x7FFFFFFF` + 8-byte L | 13 bytes            | 2,147,483,647 – 9,223,372,036,854,775,807 | The 4-byte sentinel `0x7FFFFFFF` says "size continues in 64-bit". L is signed 64-bit little-endian |
+| First byte on wire                   | Total bytes on wire | Value range represented                   | Notes                                                                                              |
+|--------------------------------------|---------------------|-------------------------------------------|----------------------------------------------------------------------------------------------------|
+| `0x00` … `0xFE`                      | 1 byte              | 0 – 254                                   | Value is the byte itself                                                                           |
+| `0xFF` + 4-byte N                    | 5 bytes             | 255 – 2,147,483,646                       | N is signed 32-bit little-endian; MUST be < 2^31-1                                                 |
+| `0xFF` + `0x7FFFFFFF` + <br>8-byte L | 13 bytes            | 2,147,483,647 – 9,223,372,036,854,775,807 | The 4-byte sentinel `0x7FFFFFFF` says "size continues in 64-bit". L is signed 64-bit little-endian |
 
 **Key points:**
 - All meta-types (BitSet, union selector, etc.) that are "encoded as a Size" inherit this same 3-tier scheme
@@ -498,7 +499,7 @@ The **Size** encoding uses a 3-tier scheme to efficiently represent values from 
 
 ### 6.2 Encoding Rules
 
-* 8‑, 16‑, 32‑, 64‑bit scalars follow the negotiated byte order.
+* 16‑, 32‑, 64‑bit scalars follow the negotiated byte order.
 * **Strings** – Size field + UTF‑8 bytes (no NUL terminator).
 * **Arrays** – Size (#elements) followed by packed elements (unless otherwise noted for _Search_ 16‑bit counts).
 * **BitSet** – Size (#bytes), then packed little‑endian bytes of the bitmap.
@@ -512,38 +513,42 @@ Alignment: Except for segmentation padding, structures are packed; there is **no
 ### 7.1 Why introspection exists
 
 PVAccess allows arbitrary, nested pvData structures. To avoid resending the same type description every time,
-the sender assigns a 16‑bit type‑ID and sends the full description once. Later messages can refer to the same
+the sender assigns a 16‑bit type‑ID and sends the full description, once. Later messages can refer to the same
 type with the much shorter "ID‑only" form. 
 
 The rules are normative: a sender must send the full form before the first `ID‑only` reference, and the mapping is per connection and per direction.
 
-| Lead byte(s)                        | Name                       | Payload that follows                                                                |
-|-------------------------------------|----------------------------|-------------------------------------------------------------------------------------|
-| `0xFF`                              | `NULL_TYPE_CODE`           | Nothing. Means "no introspection here (and no user data that would need it)".       |
-| `0xFE` `<id>`                       | `ONLY_ID_TYPE_CODE`        | 2‑byte id (little‑ or big‑endian = connection byte order).                          | 
-| `0xFD` `<id>` `<FieldDesc>`         | `FULL_WITH_ID_TYPE_CODE`   | 2‑byte id then the complete FieldDesc tree.                                         | 
-| `0xFC` `<id>` `<tag>` `<FieldDesc>` | `FULL_TAGGED_ID_TYPE_CODE` | As above plus a 32‑bit tag used only on lossy transports.                           |
-| `0x00` ... `0xDF`                   | `FULL_TYPE_CODE`           | Stand‑alone FieldDesc with no ID (rare in TCP; mainly inside Variant‑Union values). |
+> Note a `TypeCode` is actually a `fieldDesc`
+> but if the value is greater than `TYPE_CODE_RAW` 
+> then the `fieldDesc` used is stored/retrieved to/from elsewhere 
+
+| Lead byte(s)                        | Name                     | Payload that follows                                                                |
+|-------------------------------------|--------------------------|-------------------------------------------------------------------------------------|
+| `0xFF`                              | `TYPE_CODE_NULL`         | Nothing. Means "no introspection here (and no user data that would need it)".       |
+| `0xFE` `<id>`                       | `TYPE_CODE_ONLY_ID`      | 2‑byte id                                                                           | 
+| `0xFD` `<id>` `<FieldDesc>`         | `TYPE_CODE_FULL_WITH_ID` | 2‑byte id then the complete FieldDesc tree.                                         | 
+| `0xFC` `<id>` `<tag>` `<FieldDesc>` | `TYPE_CODE_TAGGED_ID`    | As above plus a 32‑bit tag used only on lossy transports.                           |
+| `0x00` ... `0xDF`                   | `TYPE_CODE_RAW`          | Stand‑alone FieldDesc with no ID (rare in TCP; mainly inside Variant‑Union values). |
 
 #### 7.1.1 Where each form is seen in PVAccess messages
 
 ##### 7.1.1.1  `INIT` responses (server → client)
 
-| Command                  | Message                    | Field that carries introspection                 | Typical first send      | 
-|--------------------------|----------------------------|--------------------------------------------------|-------------------------|
-| Channel GET              | channelGetResponseInit     | pvStructureIF                                    | FULL_WITH_ID            | 
-| Channel PUT              | channelPutResponseInit     | pvPutStructureIF                                 | FULL_WITH_ID            |
-| Channel PUT‑GET          | channelPutGetResponseInit  | pvPutStructureIF, pvGetStructureIF               | FULL_WITH_ID            |
-| Channel MONITOR          | channelMonitorResponseInit | pvStructureIF                                    | FULL_WITH_ID            | 
-| Channel ARRAY            | channelArrayResponseInit   | pvArrayIF                                        | FULL_WITH_ID            | 
-| Channel PROCESS          | channelProcessResponseInit | (none – only status)                             |                         |
-| Get‑Field (command 0x11) | channelGetFieldResponse    | subFieldIF                                       | FULL_WITH_ID or ONLY_ID | 
-| Beacon / Validation      | serverStatusIF, etc.       | May be NULL_TYPE_CODE if server sends no status. |                         |
+| Command                  | Message                    | Field that carries introspection                 | Typical first send                          | 
+|--------------------------|----------------------------|--------------------------------------------------|---------------------------------------------|
+| Channel GET              | channelGetResponseInit     | pvStructureIF                                    | TYPE_CODE_FULL_WITH_ID                      | 
+| Channel PUT              | channelPutResponseInit     | pvPutStructureIF                                 | TYPE_CODE_FULL_WITH_ID                      |
+| Channel PUT‑GET          | channelPutGetResponseInit  | pvPutStructureIF, pvGetStructureIF               | TYPE_CODE_FULL_WITH_ID                      |
+| Channel MONITOR          | channelMonitorResponseInit | pvStructureIF                                    | TYPE_CODE_FULL_WITH_ID                      | 
+| Channel ARRAY            | channelArrayResponseInit   | pvArrayIF                                        | TYPE_CODE_FULL_WITH_ID                      | 
+| Channel PROCESS          | channelProcessResponseInit | (none – only status)                             |                                             |
+| Get‑Field (command 0x11) | channelGetFieldResponse    | subFieldIF                                       | TYPE_CODE_FULL_WITH_ID or TYPE_CODE_ONLY_ID | 
+| Beacon / Validation      | serverStatusIF, etc.       | May be NULL_TYPE_CODE if server sends no status. |                                             |
 
 
 - Complex payloads start with a **FieldDesc tree** that fully describes the `PVStructure` or `PVScalarArray` layout.  
 - The descriptors are **interned** per connection; both sides cache them by integer `<id>` to avoid resending.  
-- Whenever a sender wishes to refer to an already‑sent layout it can send the compact `ONLY_ID_TYPE_CODE` form instead of repeating the full tree.
+- Whenever a sender wishes to refer to an already‑sent layout, it can send the compact `TYPE_CODE_ONLY_ID` form instead of repeating the full tree.
 
 ##### 7.1.1.2  Data responses (`GET`, `MONITOR` updates, `ARRAY` slices…)
 
@@ -551,26 +556,39 @@ Once the type has been established, data‑bearing messages include no introspec
 They start directly with:
 
 ```text
-BitSet changedBitSet   // GET & MONITOR
+BitSet changedBitSet   // `GET` & `MONITOR`
 PVField valueData      // encoded per FieldDesc already cached
 (optional BitSet overrunBitSet)
 ```
 
 > For these messages we must look up the cached `FieldDesc` using the `type‑ID` that was assigned in the corresponding `INIT` step.  
-> Then we will know the field name, and type (so how many bytes to pull and how to display them).  
+> Then we will know the field name and type (so how many bytes to pull and how to display them).  
 > The bit-set will show us what fields to get from the cached info and therefore how to decode the bytes that follow.   
 
-##### 7.1.1.3  Requests originating from the client
+##### 7.1.1.3 Requests originating from the client
 
-If the client needs to embed a pvRequest structure (e.g. filter options) it follows the same rules: send FULL_WITH_ID the first time, then ONLY_ID in subsequent identical requests.
+If the client needs to embed a pvRequest structure (e.g., filter options), it follows the same rules: send `TYPE_CODE_FULL_WITH_ID` the first time, then `TYPE_CODE_ONLY_ID` in subsequent identical requests.
 
+##### 7.1.1.4 Bitsets
+
+Bitsets are encoded with a size in bytes followed by the actual bytes of the bitset.  They represent a depth-first traversal
+of the PVData organised as one-bit per node (leaf or branch) from right to left within each byte (LSB first) and
+each subsequent byte representing the next eight nodes.
+- If any bit is set
+  - If it's a complex type, then we need to flag all its children to be included also
+  - If it's a simple type, then the bit only applies to the one field itself or
+    - in the case of arrays, all of the elements of the array are included 
 
 ## 8. TypeCode System
 
 Each node in a **FieldDesc tree** begins with **one opaque byte** called a `TypeCode`.
+If this type_code is less than `TYPE_CODE_RAW` then it represents a fieldDesc.
 The PVXS implementation maps these bytes exactly to the EPICS pvData enumeration:
 
 ### 8.1 Standard Type Codes
+
+We determine the types from the fieldDesc by decoding the bit patterns, but this table
+serves as an easy reference to the most common types.
 
 **PVXS TypeCodes** (from `src/pvxs/data.h`)
 
@@ -881,13 +899,13 @@ CA 02 40 0D   34 00 00 00        # magic, ver, flags=0x40(server‑msg), cmd, si
 2A 00 00 00                     # requestID   (0x2A)
 08                              # subcommand  0x08  = INIT
 FF                              # Status      0xFF  = OK (no text)
-FD 01 00                        # FULL_WITH_ID, id = 1   (little‑endian)
+FD 01 00                        # TYPE_CODE_FULL_WITH_ID, id = 1   (little‑endian)
 80                              # FieldDesc lead‑byte: structure, scalar
 15 "epics:nt/NTScalar:1.0"      # typeID (Size+UTF‑8)
 09                              # member count = 9
    05 "value"   21              # double  (lead‑byte 0x21)
-   05 "alarm"   FD 02 00 83 …   # FULL_WITH_ID id=2  (alarm_t schema)
-   09 "timeStamp" FD 03 00 83…  # FULL_WITH_ID id=3  (timeStamp_t)
+   05 "alarm"   FD 02 00 83 …   # TYPE_CODE_FULL_WITH_ID id=2  (alarm_t schema)
+   09 "timeStamp" FD 03 00 83…  # TYPE_CODE_FULL_WITH_ID id=3  (timeStamp_t)
    07 "display" FD 04 00 83…    # etc.
    ...
 ```
