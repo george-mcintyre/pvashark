@@ -907,7 +907,7 @@ function bufToBinary(buf)
 
         -- Convert each byte to 8-bit binary
         for bit = 7, 0, -1 do
-            binary_bytes =  "" .. ((byte >> bit) & 1) .. binary_bytes
+            binary_bytes =  "" .. binary_bytes .. ((byte >> bit) & 1)
         end
     end
 
@@ -922,7 +922,7 @@ end
 --- @return number the unsigned integer
 ----------------------------------------------
 local function getUint(buf, is_big_endian)
-    return buf:len() == 1 and buf:byte() or (is_big_endian == nil or is_big_endian) and (buf:len() == 2 and buf:uint() or buf:uint64():tonumber()) or (buf:len() == 2 and buf:le_uint() or buf:le_uint64():tonumber())
+    return buf:len() == 1 and buf:uint() or (is_big_endian == nil or is_big_endian) and (buf:len() == 2 and buf:uint() or buf:uint64():tonumber()) or (buf:len() == 2 and buf:le_uint() or buf:le_uint64():tonumber())
 end
 
 ----------------------------------------------
@@ -998,7 +998,11 @@ end
 local function getBitSet(buf, is_big_endian)
     local bitset_count
     bitset_count, buf = decodeSize(buf, is_big_endian)
-    return buf:len() < bitset_count and nil or buf:len() == bitset_count and buf or buf:range(0, bitset_count), buf:range(bitset_count)
+    if buf:len() < bitset_count then
+        return nil, buf
+    else
+        return buf:len() == bitset_count and buf or buf:range(0, bitset_count), buf:range(bitset_count)
+    end
 end
 
 ----------------------------------------------
@@ -1077,6 +1081,7 @@ function getDataForType(buf, is_big_endian, type_code)
     if isStringType(type_code) then
         local remaining_buf
         value, remaining_buf = decodeString(buf, is_big_endian)
+        if not remaining_buf then return value, 0 end
         size = buf:len() - remaining_buf:len()
     else
         if isBoolType(type_code) then
@@ -1146,6 +1151,7 @@ function displayDataForType(buf, is_big_endian, type_code, tree, label, len)
             local el_size
             local el_label = "[" .. i .. "]"
             value, el_size = getDataForType(ar_buf, is_big_endian, type_code)
+            if el_size == 0 or not value then return nil end
             ar_tree:add(ar_buf(0, el_size), string.format(el_label .. ": %s", value))
             ar_buf = ar_buf:range(el_size)
             size = size + el_size
@@ -1369,6 +1375,34 @@ function addRequiredRoot(buf, trees, current_field_pos, label)
 end
 
 ----------------------------------------------
+-- decodeStatus: decode the given message body to extract and display the status
+----------------------------------------------
+--- @param buf: the buffer to read the status from
+--- @param tree: the tree node to display the status in
+--- @param is_big_endian is the byte stream big endian
+--- @return table the remaining buffer after reading the status
+----------------------------------------------
+local function decodeStatus (buf, tree, is_big_endian)
+    local status_code = buf(0,1):uint()
+    local sub_tree = tree:add(fstatus, buf(0,1))
+    buf = buf:len() > 1 and buf(1) or buf
+
+    if status_code ==0xFF then
+        return buf
+    else
+        local message, stack
+        message, buf = decodeString(buf, is_big_endian)
+        stack, buf = decodeString(buf, is_big_endian)
+        sub_tree:append_text(message:string())
+        if (status_code ~=0 and stack:len()>0) then
+            sub_tree:add_expert_info(PI_RESPONSE_CODE, PI_WARN, stack:string())
+        end
+        return buf
+    end
+end
+
+
+----------------------------------------------
 --- decodePVField: decode the given message body into the given root tree node
 ----------------------------------------------
 --- @param buf table the buffer to decode from
@@ -1409,6 +1443,7 @@ function decodePVField(buf, root_tree, is_big_endian, request_id, bitset_str)
         if bitset_str:sub(bit_count- field_index, bit_count- field_index) == "1" then
             -- get the field path for the field to display
             local field_path = FieldRegistry:getIndexedField(request_id, field_index)
+            if not field_path then return end
 
             local field_path_len = #field_path
             local field_info = field_path[field_path_len]
@@ -1575,34 +1610,6 @@ local function isAuthMethod(method_name, prev_was_method)
 
     return false
 end
-
-----------------------------------------------
--- decodeStatus: decode the given message body to extract and display the status
-----------------------------------------------
---- @param buf: the buffer to read the status from
---- @param tree: the tree node to display the status in
---- @param is_big_endian is the byte stream big endian
---- @return table the remaining buffer after reading the status
-----------------------------------------------
-local function decodeStatus (buf, tree, is_big_endian)
-    local status_code = buf(0,1):uint()
-    local sub_tree = tree:add(fstatus, buf(0,1))
-    buf = buf:len() > 1 and buf(1) or buf
-
-    if status_code ==0xFF then
-        return buf
-    else
-        local message, stack
-        message, buf = decodeString(buf, is_big_endian)
-        stack, buf = decodeString(buf, is_big_endian)
-        sub_tree:append_text(message:string())
-        if (status_code ~=0 and stack:len()>0) then
-            sub_tree:add_expert_info(PI_RESPONSE_CODE, PI_WARN, stack:string())
-        end
-        return buf
-    end
-end
-
 
 ----------------------------
 -- command decoders
@@ -2046,6 +2053,13 @@ local function pvaGenericClientOpDecoder (buf, pkt, tree, is_big_endian, cmd)
             tree:add_expert_info(PI_MALFORMED, PI_ERROR, "Truncated PVData")
             return
         end
+    else
+        buf = decodeStatus(buf, tree, is_big_endian)
+        bitset, buf = getBitSet(buf, is_big_endian)
+        if not buf then
+            tree:add_expert_info(PI_MALFORMED, PI_ERROR, "Truncated PVData")
+            return
+        end
     end
 
     -- Process remaining payload
@@ -2082,6 +2096,13 @@ local function pvaGenericServerOpDecoder (buf, pkt, tree, is_big_endian, cmd)
         buf = pvaDecodePVDataType(buf, pvd_tree, is_big_endian, request_id)
     elseif cmd == MONITOR_MESSAGE then
         -- Monitor messages have a changed bitset
+        bitset, buf = getBitSet(buf, is_big_endian)
+        if not buf then
+            tree:add_expert_info(PI_MALFORMED, PI_ERROR, "Truncated PVData")
+            return
+        end
+    else
+        buf = decodeStatus(buf, tree, is_big_endian)
         bitset, buf = getBitSet(buf, is_big_endian)
         if not buf then
             tree:add_expert_info(PI_MALFORMED, PI_ERROR, "Truncated PVData")
@@ -2243,6 +2264,8 @@ local function decode(buf, pkt, root)
         else
             pkt.cols.info:append("Msg: " .. cmd .. " ")
         end
+
+        if message_len <= 0 then return PVA_HEADER_LEN + message_len end
 
         if is_big_endian
         then
