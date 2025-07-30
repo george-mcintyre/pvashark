@@ -372,41 +372,41 @@ sub‑commands are in **byte 0** of payload.  Most channel operations use the fo
    │  └─ Operation ID: 2154848337
    ├─ Sub-command: 0x08
    ├─ Status: OK (0xff)
-   ├─ PVData Introspection
-   └─ value (0x80: NTScalar) → 1
-      ├─ value (0x43: double)
-      └─ alarm (0x80: alarm_t) → 2
-      │  ├─ severity (0x22: int32_t)
-      │  ├─ status (0x22: int32_t)
-      │  └─ message (0x60: string)
-      ├─ timeStamp (0x80: struct) → 3
-      │  ├─ secondsPastEpoch (0x23: int64_t)
-      │  ├─ nanoseconds (0x22: int32_t)
-      │  └─ userTag (0x22: int32_t)
-      ├─ display (0x80: struct) → 4
-      │  ├─ limitLow (0x43: double)
-      │  ├─ limitHigh (0x43: double)
-      │  ├─ description (0x60: string)
-      │  ├─ units (0x60: string)
-      │  ├─ precision (0x22: int32_t)
-      │  └─ form (0x80: enum_t) → 5
-      │     ├─ index (0x22: int32_t)
-      │     └─ choices[] (0x68: string[])
-      ├─ control (0x80: control_t) → 6
-      │  ├─ limitLow (0x43: double)
-      │  ├─ limitHigh (0x43: double)
-      │  └─ minStep (0x43: double)
-      └─ valueAlarm (0x80: valueAlarm_t) → 7
-         ├─ active (0x00: bool)
-         ├─ lowAlarmLimit (0x43: double)
-         ├─ lowWarningLimit (0x43: double)
-         ├─ highWarningLimit (0x43: double)
-         ├─ highAlarmLimit (0x43: double)
-         ├─ lowAlarmSeverity (0x22: int32_t)
-         ├─ lowWarningSeverity (0x22: int32_t)
-         ├─ highWarningSeverity (0x22: int32_t)
-         ├─ highAlarmSeverity (0x22: int32_t)
-         └─ hysteresis (0x20: int8_t)
+   └─ PVData Introspection
+      └─ value (0x80: NTScalar) → 1
+         ├─ value (0x43: double)
+         ├─ alarm (0x80: alarm_t) → 2
+         │  ├─ severity (0x22: int32_t)
+         │  ├─ status (0x22: int32_t)
+         │  └─ message (0x60: string)
+         ├─ timeStamp (0x80: struct) → 3
+         │  ├─ secondsPastEpoch (0x23: int64_t)
+         │  ├─ nanoseconds (0x22: int32_t)
+         │  └─ userTag (0x22: int32_t)
+         ├─ display (0x80: struct) → 4
+         │  ├─ limitLow (0x43: double)
+         │  ├─ limitHigh (0x43: double)
+         │  ├─ description (0x60: string)
+         │  ├─ units (0x60: string)
+         │  ├─ precision (0x22: int32_t)
+         │  └─ form (0x80: enum_t) → 5
+         │     ├─ index (0x22: int32_t)
+         │     └─ choices[] (0x68: string[])
+         ├─ control (0x80: control_t) → 6
+         │  ├─ limitLow (0x43: double)
+         │  ├─ limitHigh (0x43: double)
+         │  └─ minStep (0x43: double)
+         └─ valueAlarm (0x80: valueAlarm_t) → 7
+            ├─ active (0x00: bool)
+            ├─ lowAlarmLimit (0x43: double)
+            ├─ lowWarningLimit (0x43: double)
+            ├─ highWarningLimit (0x43: double)
+            ├─ highAlarmLimit (0x43: double)
+            ├─ lowAlarmSeverity (0x22: int32_t)
+            ├─ lowWarningSeverity (0x22: int32_t)
+            ├─ highWarningSeverity (0x22: int32_t)
+            ├─ highAlarmSeverity (0x22: int32_t)
+            └─ hysteresis (0x20: int8_t)
 
 ```
 
@@ -454,7 +454,8 @@ sub‑commands are in **byte 0** of payload.  Most channel operations use the fo
    │  ├─ Destroy: No (0)
    │  └─ Process: No (0)
    ├─ BitSet: 0 bytes (full value update)
-   └─ value (0x22: int32_t): 1234
+   └─ PVData
+      └─ value (0x22: int32_t): 1234
 ```
 
 ---
