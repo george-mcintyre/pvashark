@@ -688,12 +688,33 @@ function FieldRegistry:getFields(request_id)
 end
 
 ----------------------------------------------
---- Fill out the bitset string replacing with `1`s all the sub-fields of complex fields
+--- Fill out the bitset string replacing with `1`s all the direct sub-fields of
+--- complex fields where the complex field already has a `1`
 ----------------------------------------------
 --- @param request_id number the request_id to fill out the bitset for
 --- @param bitset_str string the bitset string to fill out
 ----------------------------------------------
 function FieldRegistry:fillOutIndexes(request_id, bitset_str)
+
+    local forced_sub_field_stack = {} -- to store the stack of forced sub fields
+
+    -- forceSubFields: force all non-complex sub fields
+    -- @param field table the field to count the subfields for
+    local function forceSubFields(field)
+        if not field or not field.sub_fields or #field.sub_fields == 0 then
+            return
+        end
+
+        -- push subfields in order they will be encountered
+        -- note we will pull from the end of the stack
+        for i = #field.sub_fields, 1, -1 do
+            local sub_field = field.sub_fields[i]
+            if not isComplexType(sub_field.type_code) then
+                table.insert(forced_sub_field_stack, sub_field)
+            end
+        end
+        return total
+    end
 
     -- subFieldCount: count all fields and subfields
     -- @param field table the field to count the subfields for
@@ -735,21 +756,15 @@ function FieldRegistry:fillOutIndexes(request_id, bitset_str)
     for index = 0, bit_count - 1 do
         local bit_pos = bit_count - index  -- Convert to 1-based MSB position
 
-        if result[bit_pos] then  -- If bit is set
-            local field = FieldRegistry:getIndexed(request_id, index)
-            if not field then return bitset_str end
-            if isComplexType(field.type_code) then
-                -- Calculate total subfield count for this complex field
-                local total_subfields = subFieldCount(field) - 1  -- Subtract 1 to exclude the parent field itself
+        local field = FieldRegistry:getIndexed(request_id, index)
+        if field then
+            if result[bit_pos] and isComplexType(field.type_code) then
+                forceSubFields(field)            -- Force all non-complex sub fields
+            end
 
-                -- Set all child bits based on actual subfield count
-                for child_offset = 1, total_subfields do
-                    local child_index = index + child_offset
-                    local child_bit_pos = bit_count - child_index
-                    if child_bit_pos >= 1 then
-                        result[child_bit_pos] = true
-                    end
-                end
+            if #forced_sub_field_stack ~= 0 and forced_sub_field_stack[#forced_sub_field_stack] == field then
+                result[bit_pos] = true               -- use the force
+                table.remove(forced_sub_field_stack) -- pop field from stack
             end
         end
     end
