@@ -583,13 +583,8 @@ If the client needs to embed a pvRequest structure (e.g., filter options), it fo
 
 ##### 7.1.1.4 Bitsets
 
-Bitsets are encoded with a size in bytes followed by the actual bytes of the bitset.  They represent a depth-first traversal
-of the PVData organised as one-bit per node (leaf or branch) from right to left within each byte (LSB first) and
-each subsequent byte representing the next eight nodes.
-- If any bit is set
-  - If it's a complex type, then we need to flag all its immediate non-complex children to be included also
-  - If it's a simple type, then the bit only applies to the one field itself or
-    - in the case of arrays, all of the elements of the array are included 
+Bitsets are encoded with a size in bytes followed by the actual bytes of the bitset. They represent a depth-first traversal
+of the PVData with LSB-first bit ordering within each byte. See Section 9 for detailed BitSet processing logic. 
 
 ## 8. TypeCode System
 
@@ -652,7 +647,7 @@ b7 b6 b5 b4 b3 b2 b1 b0
 └─┬─┘ └─┬─┘ └─┬───┘
   │     │     └─────→ Size (10=32bit float, 11=64bit double)
   │     └───────────→ Array
-  └─────────────────→ Floating poing
+  └─────────────────→ Floating point
 ```
 
 **Complex Types** (when `kind == 100`):
@@ -830,15 +825,15 @@ Fields are indexed using depth-first traversal starting from index 0 (root field
 
 ```text
 0 root (NTScalar)
-1 ├─ value  (double)
-2 ├─ alarm          (structure)
-  │  ├─3 secondsPastEpoch (int64)
-  │  ├─4 nanoseconds      (int32)
-  │  └─5 userTag          (int32)
-6 ├─ timeStamp      (structure)
-  │  ├─7 secondsPastEpoch (int64)
-  │  ├─8 nanoseconds      (int32)
-  │  └─9 userTag          (int32)
+1 ├─ value (double)
+2 ├─ alarm (structure)
+3 │  ├─ severity (int32_t)
+4 │  ├─ status (int32_t) 
+5 │  └─ message (string)
+6 ├─ timeStamp (structure)
+7 │  ├─ secondsPastEpoch (int64_t)
+8 │  ├─ nanoseconds (int32_t)
+9 │  └─ userTag (int32_t)
 . ├─ display        (structure)
   │  ├ 
   │
@@ -856,19 +851,27 @@ Fields are indexed using depth-first traversal starting from index 0 (root field
 
 **BitSet Display**:
 ```
-├─ Changed BitSet (2 bytes): 10000101
-   └─ Effective:             10111111
+├─ Changed BitSet (1 byte): 01000001
+   └─ Effective:         01111000011
 ```
 
-Shows both the original received bitset and the effective bitset after forcing direct non-complex children of set complex fields. In this example, bit 2 (alarm struct) forces bits 3-5 (severity, status, message) to be included, bit 0 (NTScalar struct) forces the value field to be included
+Shows both the original received bitset and the effective bitset after forcing direct non-complex children of set complex fields. In this example, 
+ - bit 0 (root) forces bit 1 (value) to be included, and 
+ - bit 6 (timeStamp struct) forces bits 7-9 (secondsPastEpoch, nanoseconds, userTag) to be included.
 
-> note that we have not shown the bits for the subfields in display, control, etc.
+> note that we have not shown the bits for the display, control, etc.
 
 ---
 
 ## 10. ChangedBitSet (Monitor, Get replies)
 
 For partial‑update messages a **BitSet** precedes the value stream.
+The *n*‑th bit set to `1` means "member *n* has been updated and its PVField appears in the payload".
+Unset bits indicate that the receiver should reuse its cached copy of that member.
+Bit numbering matches the depth‑first order of the `FieldDesc` tree.
+
+When a complex field (structure) bit is set, all its direct non-complex subfields are automatically included.
+If you wanted only individual `nanoseconds`, you would set bit 8 specifically.
 
 ### 10.1 Example of exchange using BitSet
 
@@ -892,7 +895,7 @@ FD 01 00                        # TYPE_CODE_FULL_WITH_ID, id = 1   (little‑end
    ...
 ```
 
-The whole NTScalar description is sent once; the disector must cache every (id → FieldDesc) found.
+The whole NTScalar description is sent once; the dissector must cache every (id → FieldDesc) found.
 
 Wireshark display required:
 
@@ -948,7 +951,8 @@ We use the Request ID to lookup the FieldDesc structure.  This contains the indi
 indexed from 0, .. N-1.  And so we can directly use the bitmask to pull up the definitions.
 
 Note: In this example ALL fields in timeStamp are provided because bit 6 (timeStamp struct) is set in the
-`BitSet`, which forces all direct non-complex subfields (secondsPastEpoch, nanoseconds, userTag) to be included. as well as the value field because of forcing from bit 0
+`BitSet`, which forces all direct non-complex subfields (secondsPastEpoch, nanoseconds, userTag) to be included. 
+Additionally, the value field is included due to bit 0 being set.
 
 In Wireshark this should show as follows:
 
@@ -969,8 +973,8 @@ In Wireshark this should show as follows:
    │  └─ Process: No (0)
    ├─ Status: OK (0xFF)
    ├─ Retrieved Field ID: (0x0001)
-   ├─ Changed BitSet (2 bytes): 00000101
-   │  └─ Effective:             10111111
+   ├─ Changed BitSet (1 byte): 01000001
+   │  └─ Effective:         01111000011
    └─ value (0x80: NTScalar)
       ├─ value (0x43: double): 12.345
       └─ timeStamp (0x80: time_t)
