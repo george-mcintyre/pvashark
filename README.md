@@ -12,7 +12,7 @@ This dissector implements a modern approach to PVAccess protocol decoding:
 
 - **Bit-Based Type Analysis**: Type codes are analyzed using bitwise operations rather than hex value lookups
 - **Field Registry System**: Sophisticated caching system for type definitions using request_id partitioning  
-- **Smart BitSet Expansion**: Automatic expansion of partial bitsets to include all required child fields
+- **Simple BitSet Expansion**: Automatic inclusion of direct non-complex children when complex fields are set
 - **Enhanced Display Format**: Standardized field format with type annotations and registry references
 
 The implementation follows the user preferences for FieldDesc formatting: `field_name (0xHH: type_name)` with clear hierarchical display and registry ID annotations.
@@ -587,7 +587,7 @@ Bitsets are encoded with a size in bytes followed by the actual bytes of the bit
 of the PVData organised as one-bit per node (leaf or branch) from right to left within each byte (LSB first) and
 each subsequent byte representing the next eight nodes.
 - If any bit is set
-  - If it's a complex type, then we need to flag all its children to be included also
+  - If it's a complex type, then we need to flag all its immediate non-complex children to be included also
   - If it's a simple type, then the bit only applies to the one field itself or
     - in the case of arrays, all of the elements of the array are included 
 
@@ -793,19 +793,19 @@ local details = bit.band(type_code, 0x07)
 
 ## 9. BitSet Processing and Field Selection
 
-### 9.1 Enhanced BitSet Handling
+### 9.1 BitSet Processing Logic
 
-The dissector implements sophisticated bitset processing that automatically expands partial bitsets to include all required child fields.
+The dissector implements straightforward bitset processing with simple expansion rules for complex fields.
 
 **BitSet Expansion Logic**:
 ```lua
 function FieldRegistry:fillOutIndexes(request_id, bitset_str)
     -- For each set bit representing a complex field:
-    -- 1. Calculate total subfield count
-    -- 2. Set all child field bits automatically
-    -- 3. Ensure complete field hierarchy is included
+    -- Force all direct non-complex subfields to be included
 end
 ```
+
+**Rule**: When a bit is set that corresponds to a complex field (structure), all direct non-complex subfields of that structure are automatically forced to be included. Nothing else is expanded.
 
 **Bit Ordering**: Bits are processed in depth-first order with LSB-first within each byte:
 ```
@@ -828,65 +828,55 @@ Result: "5432109876543210"
 
 Fields are indexed using depth-first traversal starting from index 0 (root field):
 
-```
-Index  Field Structure
-  0    value (root NTScalar)
-  1    ├─ value (double)  
-  2    ├─ alarm (struct)
-  3    │  ├─ severity (int32_t)
-  4    │  ├─ status (int32_t) 
-  5    │  └─ message (string)
-  6    ├─ timeStamp (struct)
-  7    │  ├─ secondsPastEpoch (int64_t)
-  8    │  ├─ nanoseconds (int32_t)
-  9    │  └─ userTag (int32_t)
+```text
+0 root (NTScalar)
+1 ├─ value  (double)
+2 ├─ alarm          (structure)
+  │  ├─3 secondsPastEpoch (int64)
+  │  ├─4 nanoseconds      (int32)
+  │  └─5 userTag          (int32)
+6 ├─ timeStamp      (structure)
+  │  ├─7 secondsPastEpoch (int64)
+  │  ├─8 nanoseconds      (int32)
+  │  └─9 userTag          (int32)
+. ├─ display        (structure)
+  │  ├ 
+  │
+. ├─ control        (structure)
+  │  ├ 
+  │
+. ├─ valueAlarm     (structure)
+  │  ├ 
+  │
 ```
 
-**Smart BitSet Expansion**: When bit 2 (alarm struct) is set, the dissector automatically sets bits 3-5 for all alarm subfields.
+**Simple BitSet Expansion**: When bit 2 (alarm struct) is set, the dissector automatically forces inclusion of bits 3-5 (severity, status, message) since they are direct non-complex children of the alarm structure.
 
 ### 9.3 Wireshark Display Integration
 
 **BitSet Display**:
 ```
 ├─ Changed BitSet (2 bytes): 10000101
-├─ Effective:               11111111
+   └─ Effective:             10111111
 ```
 
-Shows both the original received bitset and the expanded effective bitset after automatic child field inclusion.
+Shows both the original received bitset and the effective bitset after forcing direct non-complex children of set complex fields. In this example, bit 2 (alarm struct) forces bits 3-5 (severity, status, message) to be included, bit 0 (NTScalar struct) forces the value field to be included
+
+> note that we have not shown the bits for the subfields in display, control, etc.
 
 ---
 
 ## 10. ChangedBitSet (Monitor, Get replies)
 
 For partial‑update messages a **BitSet** precedes the value stream.
-The *n*‑th bit set to `1` means "member *n* has been updated and its PVField appears in the payload".
-Unset bits indicate that the receiver should reuse its cached copy of that member.
-Bit numbering matches the depth‑first order of the `FieldDesc` tree.
 
-Example of depth-first numbering used by `BitSet` for `NTScalar double`:
-
-```text
-0 value  (double)
-1 alarm          (structure)
-2 timeStamp      (structure)
-        ├─3 secondsPastEpoch (int64)
-        ├─4 nanoseconds      (int32)
-        └─5 userTag          (int32)
-6 display        (structure)
-7 control        (structure)
-8 valueAlarm     (structure)
-```
-
-Only the root indices matter when you flag "whole sub‑structure changed".
-If you wanted individual `nanoseconds` only, you would also set bit 4.
-
-### 10.1 Full example of exchange using BitSet
+### 10.1 Example of exchange using BitSet
 
 #### 10.1.1  `MONITOR INIT` (introspection only)
 
 ```text
 -- 8‑byte header -------------------------------------------------------
-CA 02 40 0D   34 00 00 00        # magic, ver, flags=0x40(server‑msg), cmd, size
+CA 02 40 0D   34 00 00 00       # magic, ver, flags=0x40(server‑msg), cmd, size
 -- payload ------------------------------------------------------------
 2A 00 00 00                     # requestID   (0x2A)
 08                              # subcommand  0x08  = INIT
@@ -902,7 +892,7 @@ FD 01 00                        # TYPE_CODE_FULL_WITH_ID, id = 1   (little‑end
    ...
 ```
 
-The whole NTScalar description is sent once; the disector mus cache every (id → FieldDesc) found.
+The whole NTScalar description is sent once; the disector must cache every (id → FieldDesc) found.
 
 Wireshark display required:
 
@@ -943,10 +933,10 @@ CA 02 40 0D   26 00 00 00        # payload is now 0x26 bytes
 -- payload -------------------------------------------------------------
 2A 00 00 00                     # requestID   (same as before)
 00                              # subcommand  0x00  = DATA
-01 05                           # changedBitSet
-                                #   Size=1 byte, mask=0b00000101
-                                #                              ^bit0 (value)
-                                #                            ^bit2 (timeStamp)
+01 41                           # changedBitSet
+                                #   Size=1 byte, mask=01000001 (simplified)
+                                #                            ^bit0 (value)
+                                #                      ^bit6 (timeStamp)
 40 9C C6 F7 6E 58 2D 40         # value = 12.345 (IEEE754 little‑endian)
 00 00 00 00 00 60 EE 5E         # secondsPastEpoch = 1 599 999 000
 00 40 27 09                     # nanoseconds      = 150 000 000
@@ -957,8 +947,8 @@ CA 02 40 0D   26 00 00 00        # payload is now 0x26 bytes
 We use the Request ID to lookup the FieldDesc structure.  This contains the individual type IDs of the fields
 indexed from 0, .. N-1.  And so we can directly use the bitmask to pull up the definitions.
 
-Note: In that in this example ALL fields in timestamp are provided because the whole `timestamp_t` structure is referenced in the
-`BitSet`.  Meaning that we need to store the relationship between the elements stored in the cache.
+Note: In this example ALL fields in timeStamp are provided because bit 6 (timeStamp struct) is set in the
+`BitSet`, which forces all direct non-complex subfields (secondsPastEpoch, nanoseconds, userTag) to be included. as well as the value field because of forcing from bit 0
 
 In Wireshark this should show as follows:
 
@@ -979,11 +969,14 @@ In Wireshark this should show as follows:
    │  └─ Process: No (0)
    ├─ Status: OK (0xFF)
    ├─ Retrieved Field ID: (0x0001)
-   ├─ Change BitSet: 0b00000101
-   ├─ value (0x43: double): 12.345
-   ├─ secondsPastEpoch (0x23: int64_t): 1599999000
-   ├─ nanoseconds (0x22: int32_t): 150000000
-   └─ userTag (0x22: int32_t): 0
+   ├─ Changed BitSet (2 bytes): 00000101
+   │  └─ Effective:             10111111
+   └─ value (0x80: NTScalar)
+      ├─ value (0x43: double): 12.345
+      └─ timeStamp (0x80: time_t)
+         ├─ secondsPastEpoch (0x23: int64_t): 1599999000
+         ├─ nanoseconds (0x22: int32_t): 150000000
+         └─ userTag (0x22: int32_t): 0
 ```
 
 
@@ -1275,60 +1268,5 @@ Arrays are fundamental to PVA protocol design. All basic types can be arrays:
 5. Captured network traffic analysis (July 2025)
 6. PVXS Protocol Documentation (GitHub: epics-base/pvxs)
 7. PVXS Source Implementation (epics-base/pvxs)
-
-## Appendix 1 : A decoding example
-
-```text
-                      i:   3         2         1         0
-                      i:  10987654 32109876 54321098 76543210
-Changed BitSet (4 bytes): 10000001 11111011 00110010 00011110
-Changed BitSet (4 bytes): 01111000 01001100 11011111 10000001
-  Effective:              11111111 11111111 00110010 00111110
-  Effective:              11111111 11111111 11111111 11111111
-
-01111000001001100110111111000001
-01111000010011001101111110000001
-
- i A E 
-00 0 0  value (0x80: NTScalar) → 1
-01 1 1  ├─ value (0x43: double)
-02 1 1  ├─ alarm (0x80: alarm_t) → 2
-03 1 1  │  ├─ severity (0x22: int32_t)
-04 1 1  │  ├─ status (0x22: int32_t)
-05 0 1  │  └─ message (0x60: string)
-06 0 0  ├─ timeStamp (0x80: struct) → 3
-07 0 0  │  ├─ secondsPastEpoch (0x23: int64_t)
-08 0 0  │  ├─ nanoseconds (0x22: int32_t)
-09 1 1  │  └─ userTag (0x22: int32_t)
-10 0 0  ├─ display (0x80: struct) → 4
-11 0 0  │  ├─ limitLow (0x43: double)
-12 1 1  │  ├─ limitHigh (0x43: double)
-13 1 1  │  ├─ description (0x60: string)
-14 0 0  │  ├─ units (0x60: string)
-15 0 0  │  ├─ precision (0x22: int32_t)
-16 1 1  │  └─ form (0x80: enum_t) → 5
-17 1 1  │     ├─ index (0x22: int32_t)         <-- All perfect up to here
-18 0 1  │     └─ choices (0x68: string[]):
-        |         ├─ choices[0]: "Default"     <-- in data but appears immediately after active (array of 7 strings) 
-        |         ├─ choices[1]: "String"      <-- in data 
-        |         ├─ choices[2]: "Binary"      <-- in data
-        |         ├─ choices[3]: "Decimal"     <-- in data
-        |         ├─ choices[4]: "Hex"         <-- in data
-        |         ├─ choices[5]: "Exponential" <-- in data
-        |         └─ choices[6]: "Engineering" <-- in data
-19 1 1  ├─ control (0x80: control_t) → 6                
-20 1 1  │  ├─ limitLow (0x43: double)          <-- immediately follows index in form
-21 1 1  │  ├─ limitHigh (0x43: double)         <-- follows
-22 1 1  │  └─ minStep (0x43: double)           <-- follows
-23 1 1  └─ valueAlarm (0x80: valueAlarm_t) → 7
-24 1 1     ├─ active (0x00: bool)              <-- follows but then immediately followed by an array of 7 strings
-25 0 1     ├─ lowAlarmLimit (0x43: double)     <-- immediately follows the last string in the string array
-26 0 1     ├─ lowWarningLimit (0x43: double)
-27 0 1     ├─ highWarningLimit (0x43: double)
-28 0 1     ├─ highAlarmLimit (0x43: double)
-29 0 1     ├─ lowAlarmSeverity (0x22: int32_t)
-30 0 1     ├─ lowWarningSeverity (0x22: int32_t)
-31 1 1     ├─ highWarningSeverity (0x22: int32_t)
-32 0 1     └─ highAlarmSeverity (0x22: int32_t)2
 
 ```
