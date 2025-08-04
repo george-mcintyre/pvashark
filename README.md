@@ -8,8 +8,6 @@ This repo extends support to all PVData and Normative Data Types.
 
 ## Implementation Highlights
 
-This dissector implements a modern approach to PVAccess protocol decoding:
-
 - **Bit-Based Type Analysis**: Type codes are analyzed using bitwise operations rather than hex value lookups
 - **Field Registry System**: Sophisticated caching system for type definitions using request_id partitioning  
 - **Simple BitSet Expansion**: Automatic inclusion of direct non-complex children when complex fields are set
@@ -367,9 +365,9 @@ sub‑commands are in **byte 0** of payload.  Most channel operations use the fo
    ├─ Magic: 0xca
    ├─ Version: 2
    ├─ Flags: 0x40
-   │  ├─ Command: MONITOR (0x0d)
+   │  ├─ Command: Channel Get (0x0A)
    │  ├─ Size: 487
-   │  └─ Operation ID: 2154848337
+   │  └─ Request ID: 2154848337
    ├─ Sub-command: 0x08
    ├─ Status: OK (0xff)
    └─ PVData Introspection
@@ -424,14 +422,15 @@ sub‑commands are in **byte 0** of payload.  Most channel operations use the fo
    ├─ Command: Channel Get (0x0A)
    ├─ Payload Size: 10
    ├─ Server Channel ID: 1006
-   ├─ Operation ID: 1002
+   ├─ Request ID: 1002
    ├─ Sub-command: 0x00
    │  ├─ Init: No (0)
    │  ├─ Destroy: No (0)
    │  └─ Process: No (0)
    ├─ Status: OK (0xFF)
    ├─ BitSet: 0 (full value)
-   └─ value (0x24: uint8_t): 42
+   └─ PVData
+      └─ value (0x24: uint8_t): 42
 ```
 
 #### 4.4.3 Client PUT Simple Scalar Integer
@@ -607,13 +606,13 @@ TYPE_CODE_RAW = 0xDF            -- Boundary for raw FieldDesc
 **Field Type Classification** (for codes < 0xDF):
 The dissector uses bit operations to determine the field kind:
 
-| Bit Pattern    | Kind        | Detection Function                      |
-|----------------|-------------|-----------------------------------------|
-| `xxx000xx`     | Boolean     | `bit.band(type_code, 0xE0) == 0x00`   |
-| `xxx001xx`     | Integer     | `bit.band(type_code, 0xE0) == 0x20`   |
-| `xxx010xx`     | Float       | `bit.band(type_code, 0xE0) == 0x40`   |
-| `xxx011xx`     | String      | `bit.band(type_code, 0xE0) == 0x60`   |
-| `xxx100xx`     | Complex     | `bit.band(type_code, 0xE0) == 0x80`   |
+| Bit Pattern | Kind    | Detection Function                  |
+|-------------|---------|-------------------------------------|
+| `000xxxxx`  | Boolean | `bit.band(type_code, 0xE0) == 0x00` |
+| `001xxxxx`  | Integer | `bit.band(type_code, 0xE0) == 0x20` |
+| `010xxxxx`  | Float   | `bit.band(type_code, 0xE0) == 0x40` |
+| `011xxxxx`  | String  | `bit.band(type_code, 0xE0) == 0x60` |
+| `100xxxxx`  | Complex | `bit.band(type_code, 0xE0) == 0x80` |
 
 ### 8.2 TypeCode Bit Layout
 
@@ -655,7 +654,7 @@ b7 b6 b5 b4 b3 b2 b1 b0
 ```
  100  b4 b3 b2 b1 b0
 └─┬─┘ └─┬─┘ └─┬───┘
-  │     │     └─────→ Variant (000=struct, 001=union, 010=any, 011=fixed_string)
+  │     │     └─────→ Variant (000=struct, 001=union, 010=any, 011=bounded_string)
   │     └───────────→ Array
   └─────────────────→ Complex
 ```
@@ -744,7 +743,6 @@ choices (0x68: string[])
 
 **Type ID Annotations**:
 - `→ N`: Field definition stored in registry with ID N
-- `← N`: Field definition retrieved from registry using ID N
 
 ### 8.7 Implementation Details: Type Code Processing
 
@@ -800,23 +798,17 @@ function FieldRegistry:fillOutIndexes(request_id, bitset_str)
 end
 ```
 
-**Rule**: When a bit is set that corresponds to a complex field (structure), all direct non-complex subfields of that structure are automatically forced to be included. Nothing else is expanded.
+**Rule**: When a bit is set that corresponds to a complex field (structure), 
+all subfields (recursively) of that structure are automatically forced to be included.
 
-**Bit Ordering**: Bits are processed in depth-first order with LSB-first within each byte:
+**Bit Ordering**: Bits are processed in depth-first order with LSBit-first within each byte:
 ```
-Input bytes:                0         1          2          3
-Input bit positions:   [01234567] [89012345] [67890123] [45678901]
-                           │         │          │          │
-Maps to output bits:    "76543210" "54321098" "32109876" "10987654"
-                           │         │          │          │
-Byte order in string:      3         2          1          0
-```
-
-**BitSet Bit Reversal Process**:
-```
-Byte 0: b7 b6 b5 b4 b3 b2 b1 b0    →    "76543210"
-Byte 1: b7 b6 b5 b4 b3 b2 b1 b0    →    "54321098" (prepended)
-Result: "5432109876543210"
+Input bytes:                        0                         1                         2                         3
+Input bit positions:   [00 01 02 03 04 05 06 07] [08 09 10 11 12 13 14 15] [16 17 18 19 20 21 22 23] [24 25 26 27 28 29 30 31]
+                                    │                         │                         │                         │
+Maps to output bits:   "07 06 05 04 03 02 01 00" "15 14 13 12 11 10 09 08" "23 22 21 20 19 18 17 16" "31 30 29 28 27 26 25 24"
+                                    │                         │                         │                         │
+Byte order in string:               0                         1                         2                         3
 ```
 
 ### 9.2 Field Indexing
@@ -851,13 +843,13 @@ Fields are indexed using depth-first traversal starting from index 0 (root field
 
 **BitSet Display**:
 ```
-├─ Changed BitSet (1 byte): 01000001
-   └─ Effective:         01111000011
+└─ Changed BitSet (1 byte): 010000100
 ```
 
-Shows both the original received bitset and the effective bitset after forcing direct non-complex children of set complex fields. In this example, 
- - bit 0 (root) forces bit 1 (value) to be included, and 
- - bit 6 (timeStamp struct) forces bits 7-9 (secondsPastEpoch, nanoseconds, userTag) to be included.
+Shows received bitset. In this example (reading bits from left to right), 
+ - bit 0 (root) not set so no children are forced 
+ - bit 1 (value) indicates that value is included 
+ - bit 6 (timeStamp struct) forces sub-fields (secondsPastEpoch, nanoseconds, userTag) to be included.
 
 > note that we have not shown the bits for the display, control, etc.
 
@@ -907,32 +899,33 @@ Wireshark display required:
    │  ├─ Direction: server (1)
    │  ├─ Byte order: LSB (0) 
    │  └─ Message type: Application (0)
-   ├─ Command: MONITOR (0x2A)
+   ├─ Command: MONITOR (0x0D)
    ├─ Payload Size: 52
    ├─ Server Channel ID: 1
    ├─ Sub-command: 0x08
-   │  ├─ Init: No (1)
+   │  ├─ Init: Yes (1)
    │  ├─ Destroy: No (0)
    │  └─ Process: No (0)
    ├─ Status: OK (0xFF)
    ├─ Cached Field ID: (0x0001)
-   └─ value (0x80: NTScalar)
-      ├─ value (0x43: double)
-      ├─ alarm (0x80: alarm_t)
-      │  ├─ severity (0x22: int32_t)
-      │  ├─ status (0x22: int32_t)
-      │  └─ message (0x60: string)
-      ├─ timeStamp (0x80: time_t)
-      │  ├─ secondsPastEpoch (0x23: int64_t)
-      │  ├─ nanoseconds (0x22: int32_t)
-      │  └─ userTag (0x22: int32_t)
+   └─ PVData Introspection
+      └─ value (0x80: NTScalar)
+         ├─ value (0x43: double)
+         ├─ alarm (0x80: alarm_t)
+         │  ├─ severity (0x22: int32_t)
+         │  ├─ status (0x22: int32_t)
+         │  └─ message (0x60: string)
+         ├─ timeStamp (0x80: time_t)
+         │  ├─ secondsPastEpoch (0x23: int64_t)
+         │  ├─ nanoseconds (0x22: int32_t)
+         │  └─ userTag (0x22: int32_t)
 ```
 
-#### 10.1.1.2 monitor data message (only value + `timeStamp` changed)
+#### 10.1.1.2 MONITOR data message (only value + `timeStamp` changed)
 
 ```text
 -- header --------------------------------------------------------------
-CA 02 40 0D   26 00 00 00        # payload is now 0x26 bytes
+CA 02 40 0D   26 00 00 00       # payload is now 0x26 bytes
 -- payload -------------------------------------------------------------
 2A 00 00 00                     # requestID   (same as before)
 00                              # subcommand  0x00  = DATA
@@ -947,11 +940,11 @@ CA 02 40 0D   26 00 00 00        # payload is now 0x26 bytes
 00                              # overrunBitSet Size=0  (no overruns)
 ```
 
-We use the Request ID to lookup the FieldDesc structure.  This contains the individual type IDs of the fields
-indexed from 0, .. N-1.  And so we can directly use the bitmask to pull up the definitions.
+We use the Request ID to look up the FieldDesc structure.  This contains the individual type IDs of the fields
+indexed from 0, .. N-1.  And so we can directly use the bitmask to pull the correct field definitions.
 
-Note: In this example ALL fields in timeStamp are provided because bit 6 (timeStamp struct) is set in the
-`BitSet`, which forces all direct non-complex subfields (secondsPastEpoch, nanoseconds, userTag) to be included. 
+Note: In this example all fields in timeStamp are provided because bit 6 (timeStamp struct) is set in the
+`ChangedBitSet`, which forces all direct non-complex subfields (secondsPastEpoch, nanoseconds, userTag) to be included. 
 Additionally, the value field is included due to bit 0 being set.
 
 In Wireshark this should show as follows:
@@ -964,23 +957,23 @@ In Wireshark this should show as follows:
    │  ├─ Direction: server (1)
    │  ├─ Byte order: LSB (0) 
    │  └─ Message type: Application (0)
-   ├─ Command: MONITOR (0x2A)
+   ├─ Command: MONITOR (0x0D)
    ├─ Payload Size: 38
    ├─ Server Channel ID: 1
-   ├─ Sub-command: 0x08
-   │  ├─ Init: No (1)
+   ├─ Sub-command: 0x00
+   │  ├─ Init: No (0)
    │  ├─ Destroy: No (0)
    │  └─ Process: No (0)
    ├─ Status: OK (0xFF)
    ├─ Retrieved Field ID: (0x0001)
-   ├─ Changed BitSet (1 byte): 01000001
-   │  └─ Effective:         01111000011
-   └─ value (0x80: NTScalar)
-      ├─ value (0x43: double): 12.345
-      └─ timeStamp (0x80: time_t)
-         ├─ secondsPastEpoch (0x23: int64_t): 1599999000
-         ├─ nanoseconds (0x22: int32_t): 150000000
-         └─ userTag (0x22: int32_t): 0
+   └─ PVData
+      ├─ Changed BitSet (1 byte): 01000010
+      └─ value (0x80: NTScalar)
+         ├─ value (0x43: double): 12.345
+         └─ timeStamp (0x80: time_t)
+            ├─ secondsPastEpoch (0x23: int64_t): 1599999000
+            ├─ nanoseconds (0x22: int32_t): 150000000
+            └─ userTag (0x22: int32_t): 0
 ```
 
 
@@ -1009,121 +1002,6 @@ Field   pvStructureIF <-- only present when status==OK/WARNING
 - **No ChangedBitSet** in MONITOR-INIT responses
 - ChangedBitSet is only sent in regular monitor update messages (subcommand 0x00)
 
-### 11.3 FULL_WITH_ID_TYPE_CODE (0xFD) 
-
-The special TypeCode `0xFD` means **FULL_WITH_ID_TYPE_CODE** - "I'm sending a full Field‑introspection description and assigning it an ID."
-
-**Wire format:**
-```
-0xFD                  FULL_WITH_ID_TYPE_CODE
-01 00                 16-bit type-ID (little-endian → ID = 1)
-80 15 "epics:nt/..."  First FieldDesc byte + Type ID string
-```
-
-**Example decode sequence:**
-```
-... FF FD 01 00 80 15 "epics:nt/NTScalar:1.0" ...
-```
-
-Decodes as:
-1. `FF` → Status OK
-2. `FD 01 00` → full introspection, assign type ID = 1
-3. `80 15 "epics:nt/NTScalar:1.0"` → FieldDesc for top-level NTScalar structure
-
-When the server later sends value updates (subcommand 0x00), it starts with a ChangedBitSet (e.g., `01 80` for bit 7 set) followed by the changed field values.
-
-### 11.4 ChannelGet Example
-
-A minimal **ChannelGet response** for a PV of type *double* might be:
-
-| Description                                              | Protocol                                                |
-|----------------------------------------------------------|---------------------------------------------------------|
-| Magic: Always 0xCA                                       | `0xCA`                                                  |
-| Version: Protocol version 2                              | `0x02`                                                  |
-| Flags: server→client, little-endian, application message | `0x40`                                                  |
-| Command: Channel Get (0x0A)                              | `0x0A`                                                  |
-| PayloadSize: 17 bytes (little-endian)                    | `0x00` `0x00` `0x00` `0x11`                             |
-| RequestID: 1 (little-endian)                             | `0x00` `0x00` `0x00` `0x01`                             |
-| Sub-command: regular GET                                 | `0x00`                                                  |
-| Status: OK (single 0xFF byte)                            | `0xFF`                                                  |
-| BitSet: 0 bytes (no changed bits, implies full value)    | `0x00`                                                  |
-| TypeCode: double                                         | `0x43`                                                  |
-| Value: IEEE-754 double 100.2                             | `0x40` `0x59` `0x0C` `0xCC` `0xCC` `0xCC` `0xCC` `0xCD` |
-
-**Wireshark Display:**
-```
-└─ Process Variable Access Protocol
-   ├─ Magic: 0xCA
-   ├─ Version: 2
-   ├─ Flags: 0x40
-   │  ├─ Direction: server (1)
-   │  ├─ Byte order: LSB (0) 
-   │  └─ Message type: Application (0)
-   ├─ Command: Channel Get (0x0A)
-   ├─ Payload Size: 17
-   ├─ Server Channel ID: 1
-   ├─ Sub-command: 0x00
-   │  ├─ Init: No (0)
-   │  ├─ Destroy: No (0)
-   │  └─ Process: No (0)
-   ├─ Status: OK (0xFF)
-   ├─ BitSet: 0 bytes (no changed bits)
-   └─ value (0x43: double): 100.2
-```
-
-The same channel, when monitored, would begin with a `Monitor‑INIT` (type tree identical), then receive periodic **server→client** messages re‑using that tree and only sending a `BitSet` + `value` when the `value` field actually changes.
-
-### 11.5 ChannelPut Example
-
-A **ChannelPut request** for an **established channel** where the `Point` structure array type is already known, with values `[{3.412, 12.3123}, {-12.523, 20.2012}]` would be:
-
-| Description                                              | Protocol                    | ...                                                     | ... |
-|----------------------------------------------------------|-----------------------------|---------------------------------------------------------|-----|
-| Magic: Always 0xCA                                       | `0xCA`                      |                                                         |     |
-| Version: Protocol version 2                              | `0x02`                      |                                                         |     |
-| Flags: client→server, little-endian, application message | `0x41`                      |                                                         |     |
-| Command: Channel Put (0x0B)                              | `0x0B`                      |                                                         |     |
-| PayloadSize: 44 bytes (little-endian)                    | `0x00` `0x00` `0x00` `0x2C` |                                                         |     |
-| RequestID: 2 (little-endian)                             | `0x00` `0x00` `0x00` `0x02` |                                                         |     |
-| ChannelID: 5 (little-endian)                             | `0x00` `0x00` `0x00` `0x05` |                                                         |     |
-| Sub-command: regular PUT                                 | `0x00`                      |                                                         |     |
-| BitSet: 0 bytes (full value update)                      | `0x00`                      |                                                         |     |
-| Array size: 2 elements                                   |                             | `0x02`                                                  |     |
-| Point[0].x: IEEE-754 double 3.412                        |                             | `0x40` `0x0B` `0x4F` `0xDF` `0x3B` `0x64` `0x5A` `0x1D` |     |
-| Point[0].y: IEEE-754 double 12.3123                      |                             | `0x40` `0x28` `0xA0` `0xF5` `0xC2` `0x8F` `0x5C` `0x29` |     |
-| Point[1].x: IEEE-754 double -12.523                      |                             | `0xC0` `0x29` `0x0F` `0x5C` `0x28` `0xF5` `0xC2` `0x8F` |     |
-| Point[1].y: IEEE-754 double 20.2012                      |                             | `0x40` `0x34` `0x33` `0xD7` `0x0A` `0x3D` `0x70` `0xA4` |     |
-
-**Wireshark Display:**
-```
-└─ Process Variable Access Protocol
-   ├─ Magic: 0xCA
-   ├─ Version: 2
-   ├─ Flags: 0x41
-   │  ├─ Direction: client (0)
-   │  ├─ Byte order: LSB (0)
-   │  └─ Message type: Application (0)
-   ├─ Command: Channel Put (0x0B)
-   ├─ Payload Size: 44
-   ├─ Request ID: 2
-   ├─ Server Channel ID: 5
-   ├─ Sub-command: 0x00
-   │  ├─ Init: No (0)
-   │  ├─ Destroy: No (0)
-   │  └─ Process: No (0)
-   ├─ BitSet: 0 bytes (full value update)
-   └─ value (0x88: Point[]): 2 elements
-      ├─ Point[0]
-      │  ├─ x (0x43: double): 3.412
-      │  └─ y (0x43: double): 12.3123
-      └─ Point[1]
-         ├─ x (0x43: double): -12.523
-         └─ y (0x43: double): 20.2012
-```
-
-> **Note**: For new channels, the first PUT operation may include a FieldDesc (type definition). Subsequent operations on established channels can omit the type information, as shown above, for improved efficiency.
-
----
 
 ## 12. Normative Types (NT) — Reference Structures
 
@@ -1191,16 +1069,17 @@ An NTScalar structure would be encoded as:
 
 **Wireshark Display:**
 ```
-└─ value (0x80: NTScalar)
-   ├─ value (0x43: double)
-   ├─ alarm (0x80: alarm_t)
-   │  ├─ severity (0x22: int32_t)
-   │  ├─ status (0x22: int32_t)
-   │  └─ message (0x60: string)
-   ├─ timeStamp (0x80: time_t)
-   │  ├─ secondsPastEpoch (0x23: int64_t)
-   │  ├─ nanoseconds (0x22: int32_t)
-   │  └─ userTag (0x22: int32_t)
+└─ PVData Introspection
+   └─ value (0x80: NTScalar)
+      ├─ value (0x43: double)
+      ├─ alarm (0x80: alarm_t)
+      │  ├─ severity (0x22: int32_t)
+      │  ├─ status (0x22: int32_t)
+      │  └─ message (0x60: string)
+      ├─ timeStamp (0x80: time_t)
+      │  ├─ secondsPastEpoch (0x23: int64_t)
+      │  ├─ nanoseconds (0x22: int32_t)
+      │  └─ userTag (0x22: int32_t)
 ```
 
 Normative‑type instances declare themselves by sending a `FieldDesc` whose **top‑level ID string** equals the NT name (e.g. `"epics:nt/NTScalar:1.0"`) so that generic GUIs can recognise and render them automatically.

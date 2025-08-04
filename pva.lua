@@ -1463,12 +1463,8 @@ function pvaDecodePVData(buf, tree, is_big_endian, request_id, bitset)
     local bitset_str = ""
     if bitset then
         bitset_str = bufToBinary(bitset)
-        local bit_tree = tree:add(bitset, string.format("Changed BitSet (%d bytes): %s", bitset:len(), bitset_str))
-        local original_len = #bitset_str
+        tree:add(bitset, string.format("Changed BitSet (%d bytes): %s", bitset:len(), bitset_str))
         bitset_str = FieldRegistry:fillOutIndexes(request_id, bitset_str)
-        local padding_len = 13 - (#bitset_str - original_len)
-        local padding = string.rep(" ", math.max(0, padding_len))
-        bit_tree:add(bitset, string.format("Effective: %s%s", padding, bitset_str))
     end
 
     decodePVField(buf, tree, is_big_endian, request_id, bitset_str)
