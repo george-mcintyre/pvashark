@@ -100,7 +100,7 @@ local fctrlcmd          = ProtoField.uint8(     "pva.ctrlcommand",          "Con
 local fctrldata         = ProtoField.uint32(    "pva.ctrldata",             "Control Data",     base.HEX)
 local fsize             = ProtoField.uint32(    "pva.size",                 "Size",             base.DEC)
 local fbody             = ProtoField.bytes(     "pva.body",                 "Body")
-local fpvd              = ProtoField.bytes(     "pva.pvd",                  "PVData Body")
+local fpvd              = ProtoField.bytes(     "pva.pvd",                  "PVData")
 local fguid             = ProtoField.bytes(     "pva.guid",                 "GUID")
 
 ----------------------------------------------
@@ -1414,10 +1414,13 @@ end
 --- @param request_id number the request id
 --- @param bitset_str string the bitset to decode
 ----------------------------------------------
-function decodePVField(buf, tree, is_big_endian, request_id, bitset_str)
+function decodePVField(buf, tree, is_big_endian, request_id, bitset_str, root_field)
     -- Expand the bitset once, per PVXS cascade semantics
-    local root_field = FieldRegistry:getRootField(request_id)
-    if not root_field then return end
+    root_field = root_field or FieldRegistry:getRootField(request_id)
+    if not root_field then
+        tree:add_expert_info(PI_PROTOCOL, PI_WARN, "Can't decode PVData without cached Introspection Data. ID: " .. math.floor(request_id))
+        return
+    end
 
     local function recurse(field, index, parent_incl, parent_tree)
         local children_check = not parent_tree and true or false
@@ -1428,7 +1431,7 @@ function decodePVField(buf, tree, is_big_endian, request_id, bitset_str)
         local my_tree = parent_tree
 
         if not is_complex_field then
-            if not children_check then 
+            if not children_check then
                 buf = displayDataForType(buf, is_big_endian, field.type_code, my_tree, field.name, field.len)
             end
             return index + 1, true
@@ -1442,7 +1445,7 @@ function decodePVField(buf, tree, is_big_endian, request_id, bitset_str)
                         break
                     end
                 end
-    
+
                 if has_visible_children then
                     local label = formatField(field.type_code, field.name, field.type)
                     my_tree = parent_tree:add(buf(0,0), label)   -- zero‑len TvbRange for header
@@ -1479,7 +1482,7 @@ end
 --- @param request_id: the request id
 --- @param bitset: the bitset to decode
 ----------------------------------------------
-function pvaDecodePVData(buf, tree, is_big_endian, request_id, bitset)
+function pvaDecodePVData(buf, tree, is_big_endian, request_id, bitset, root_field)
     local bitset_str = ""
     if bitset then
         bitset_str = bufToBinary(bitset)
@@ -1487,7 +1490,7 @@ function pvaDecodePVData(buf, tree, is_big_endian, request_id, bitset)
         bitset_str = FieldRegistry:fillOutIndexes(request_id, bitset_str)
     end
 
-    decodePVField(buf, tree, is_big_endian, request_id, bitset_str)
+    decodePVField(buf, tree, is_big_endian, request_id, bitset_str, root_field)
 end
 
 
@@ -2033,6 +2036,12 @@ local function pvaGenericClientOpDecoder (buf, pkt, tree, is_big_endian, cmd)
     elseif cmd == RPC_MESSAGE then
         local pvd_tree = tree:add(buf, "RPC Query Introspection")
         buf = pvaDecodePVDataType(buf, pvd_tree, is_big_endian, request_id)
+    elseif cmd == PUT_MESSAGE or cmd == PUT_GET_MESSAGE then
+        bitset, buf = getBitSet(buf, is_big_endian)
+        if not buf then
+            tree:add_expert_info(PI_MALFORMED, PI_ERROR, "Truncated PVData")
+            return
+        end
     elseif cmd == MONITOR_MESSAGE then
         -- Monitor messages have a changed bitset
         bitset, buf = getBitSet(buf, is_big_endian)
@@ -2070,7 +2079,8 @@ local function pvaGenericServerOpDecoder (buf, pkt, tree, is_big_endian, cmd)
     local sub_command, request_id, bitset
     request_id, sub_command, buf = decodeSubCommand(buf, pkt, tree, is_big_endian, cmd, false)
 
-    if (cmd ~= MONITOR_UPDATE and bit.band(sub_command, 0x08) ~= 0) then
+    if (    cmd ~= MONITOR_UPDATE and
+            cmd ~= GET_FIELD_MESSAGE and bit.band(sub_command, 0x08) ~= 0) then
         buf = decodeStatus(buf, tree, is_big_endian)
     end
 
@@ -2092,6 +2102,12 @@ local function pvaGenericServerOpDecoder (buf, pkt, tree, is_big_endian, cmd)
             tree:add_expert_info(PI_MALFORMED, PI_ERROR, "Truncated PVData")
             return
         end
+    elseif cmd == GET_FIELD_MESSAGE then
+        local pvd_tree = tree:add(buf, "GET Response Introspection")
+        buf = pvaDecodePVDataType(buf, pvd_tree, is_big_endian, request_id)
+    elseif (cmd == PUT_MESSAGE or
+            cmd == PUT_GET_MESSAGE) and buf:len() == 0 then
+        return
     else
         buf = decodeStatus(buf, tree, is_big_endian)
         bitset, buf = getBitSet(buf, is_big_endian)
@@ -2121,6 +2137,7 @@ local server_cmd_handler = {
     [PUT_MESSAGE] =                     pvaGenericServerOpDecoder,
     [PUT_GET_MESSAGE] =                 pvaGenericServerOpDecoder,
     [MONITOR_MESSAGE] =                 pvaGenericServerOpDecoder,
+    [GET_FIELD_MESSAGE] =               pvaGenericServerOpDecoder,
     [ARRAY_MESSAGE] =                   pvaGenericServerOpDecoder,
     [RPC_MESSAGE] =                     pvaGenericServerOpDecoder,
 }
@@ -2303,7 +2320,7 @@ function pva.dissector (buf, pkt, root)
     while buf:len() > 0
     do
         local consumed = decode(buf, pkt, root)
-        consumed = math.floor(consumed)
+        consumed = not consumed and total_consumed or math.floor(consumed)
 
         if consumed < 0
         then
