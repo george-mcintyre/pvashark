@@ -1397,7 +1397,7 @@ local function decodeStatus (buf, tree, is_big_endian)
         else
             sub_tree:append_text(message)
         end
-        if (status_code ~=0 and stack:len()>0) then
+        if (status_code ~=0 and stack and stack:len()>0) then
             sub_tree:add_expert_info(PI_RESPONSE_CODE, PI_WARN, stack)
         end
         return buf
@@ -1420,6 +1420,7 @@ function decodePVField(buf, tree, is_big_endian, request_id, bitset_str)
     if not root_field then return end
 
     local function recurse(field, index, parent_incl, parent_tree)
+        local children_check = not parent_tree and true or false
         local is_complex_field = isComplexType(field.type_code)
         local included = parent_incl or (bitset_str:sub(index+1, index+1) == "1")
         if not included and not is_complex_field then return index + 1 end
@@ -1427,15 +1428,34 @@ function decodePVField(buf, tree, is_big_endian, request_id, bitset_str)
         local my_tree = parent_tree
 
         if not is_complex_field then
-            buf = displayDataForType(buf, is_big_endian, field.type_code, my_tree, field.name, field.len)
-            return index + 1
+            if not children_check then 
+                buf = displayDataForType(buf, is_big_endian, field.type_code, my_tree, field.name, field.len)
+            end
+            return index + 1, true
         else
-            local label = formatField(field.type_code, field.name, field.type)
-            my_tree = parent_tree:add(buf(0,0), label)   -- zero‑len TvbRange for header
+            if not children_check then
+                local test_child_idx = index + 1
+                local has_visible_children = false
+                for _, child in ipairs(field.sub_fields or {}) do
+                    test_child_idx, has_visible_children = recurse(child, test_child_idx, included) -- check if has visible children
+                    if has_visible_children then
+                        break
+                    end
+                end
+    
+                if has_visible_children then
+                    local label = formatField(field.type_code, field.name, field.type)
+                    my_tree = parent_tree:add(buf(0,0), label)   -- zero‑len TvbRange for header
+                end
+            end
 
             local child_idx = index + 1
+            local has_visible_children = false
             for _, child in ipairs(field.sub_fields or {}) do
-                child_idx = recurse(child, child_idx, included, my_tree)
+                child_idx, has_visible_children = recurse(child, child_idx, included, my_tree)
+                if children_check and has_visible_children then
+                    return child_idx, true
+                end
             end
             return child_idx
         end
