@@ -102,6 +102,7 @@ local fsize             = ProtoField.uint32(    "pva.size",                 "Siz
 local fbody             = ProtoField.bytes(     "pva.body",                 "Body")
 local fpvd              = ProtoField.bytes(     "pva.pvd",                  "PVData")
 local fpvdi             = ProtoField.bytes(     "pva.pvd",                  "PVData Introspection")
+local focsp             = ProtoField.bytes(     "pva.pvd.ocsp",             "ocsp_response")
 local fguid             = ProtoField.bytes(     "pva.guid",                 "GUID")
 
 ----------------------------------------------
@@ -184,7 +185,7 @@ local fsearch_found     = ProtoField.bool(      "pva.found",                "Fou
 -----------------------------------------------
 
 pva.fields = {
-    fmagic, fver, fflags, fflag_dir, fflag_end, fflag_msgtype, fflag_segmented, fcmd, fctrlcmd, fctrldata, fsize, fbody, fpvd, fpvdi, fguid,
+    fmagic, fver, fflags, fflag_dir, fflag_end, fflag_msgtype, fflag_segmented, fcmd, fctrlcmd, fctrldata, fsize, fbody, fpvd, fpvdi, focsp, fguid,
     fcid, fsid, frequest_id, fsubcmd, fsubcmd_proc, fsubcmd_init, fsubcmd_dstr, fsubcmd_get, fsubcmd_gtpt, fstatus,
     fbeacon_seq, fbeacon_change,
     fvalid_bsize, fvalid_isize, fvalid_qos, fvalid_host, fvalid_method, fvalid_authority, fvalid_account, fvalid_user, fvalid_isTLS,
@@ -1135,6 +1136,14 @@ function displayDataForType(buf, is_big_endian, type_code, tree, label, len)
         if not len then
             return buf
         end
+
+        -- special handling of OCSP payloads
+        if label == "ocsp_response" and type_code == 0x2C then
+            tree:add(focsp, buf)
+            return nil -- its the last thing in the message
+        end
+        -- end OCSP
+
 
         local ar_tree = tree:add(buf(0, 1), label)
         if len == 0 then
