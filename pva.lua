@@ -101,6 +101,7 @@ local fctrldata         = ProtoField.uint32(    "pva.ctrldata",             "Con
 local fsize             = ProtoField.uint32(    "pva.size",                 "Size",             base.DEC)
 local fbody             = ProtoField.bytes(     "pva.body",                 "Body")
 local fpvd              = ProtoField.bytes(     "pva.pvd",                  "PVData")
+local fpvdi             = ProtoField.bytes(     "pva.pvd",                  "PVData Introspection")
 local fguid             = ProtoField.bytes(     "pva.guid",                 "GUID")
 
 ----------------------------------------------
@@ -183,7 +184,7 @@ local fsearch_found     = ProtoField.bool(      "pva.found",                "Fou
 -----------------------------------------------
 
 pva.fields = {
-    fmagic, fver, fflags, fflag_dir, fflag_end, fflag_msgtype, fflag_segmented, fcmd, fctrlcmd, fctrldata, fsize, fbody, fpvd, fguid,
+    fmagic, fver, fflags, fflag_dir, fflag_end, fflag_msgtype, fflag_segmented, fcmd, fctrlcmd, fctrldata, fsize, fbody, fpvd, fpvdi, fguid,
     fcid, fsid, frequest_id, fsubcmd, fsubcmd_proc, fsubcmd_init, fsubcmd_dstr, fsubcmd_get, fsubcmd_gtpt, fstatus,
     fbeacon_seq, fbeacon_change,
     fvalid_bsize, fvalid_isize, fvalid_qos, fvalid_host, fvalid_method, fvalid_authority, fvalid_account, fvalid_user, fvalid_isTLS,
@@ -1448,7 +1449,11 @@ function decodePVField(buf, tree, is_big_endian, request_id, bitset_str, root_fi
 
                 if has_visible_children then
                     local label = formatField(field.type_code, field.name, field.type)
-                    my_tree = parent_tree:add(buf(0,0), label)   -- zero‑len TvbRange for header
+                    if not buf then
+                        my_tree = parent_tree:add(label)
+                    else
+                        my_tree = parent_tree:add(buf(0,0), label)   -- zero‑len TvbRange for header
+                    end
                 end
             end
 
@@ -2028,13 +2033,14 @@ local function pvaGenericClientOpDecoder (buf, pkt, tree, is_big_endian, cmd)
     request_id, sub_command, buf = decodeSubCommand(buf, pkt, tree, is_big_endian, cmd, true)
 
     if not buf or buf:len() < 1 then return end
+    local pvdbuf = buf:range(0)
 
     -- if the subcommand is INIT then no change BitSet - just introspect
     if bit.band(sub_command, 0x08) ~= 0 then
-        local pvd_tree = tree:add(buf, "PVData Introspection")
+        local pvd_tree = tree:add(fpvdi, pvdbuf)
         buf = pvaDecodePVDataType(buf, pvd_tree, is_big_endian, request_id)
     elseif cmd == RPC_MESSAGE then
-        local pvd_tree = tree:add(buf, "RPC Query Introspection")
+        local pvd_tree = tree:add(fpvdi, pvdbuf)
         buf = pvaDecodePVDataType(buf, pvd_tree, is_big_endian, request_id)
     elseif cmd == PUT_MESSAGE or cmd == PUT_GET_MESSAGE then
         bitset, buf = getBitSet(buf, is_big_endian)
@@ -2060,7 +2066,7 @@ local function pvaGenericClientOpDecoder (buf, pkt, tree, is_big_endian, cmd)
 
     -- Process remaining payload
     if buf and buf:len() > 0 then
-        local pvd_tree = tree:add(buf, "PVData")
+        local pvd_tree = tree:add(fpvd, pvdbuf)
         pvaDecodePVData(buf, pvd_tree, is_big_endian, request_id, bitset)
     end
 end
@@ -2085,15 +2091,16 @@ local function pvaGenericServerOpDecoder (buf, pkt, tree, is_big_endian, cmd)
     end
 
     if not buf or buf:len() < 1 then return end
+    local pvdbuf = buf:range(0)
 
     -- if the subcommand is INIT then no change BitSet - just introspect
     if bit.band(sub_command, 0x08) ~= 0 then
         -- optional Introspection Data
-        local pvd_tree = tree:add(buf, "PVData Introspection")
+        local pvd_tree = tree:add(fpvdi, pvdbuf)
         buf = pvaDecodePVDataType(buf, pvd_tree, is_big_endian, request_id)
     elseif cmd == RPC_MESSAGE then
         buf = decodeStatus(buf, tree, is_big_endian)
-        local pvd_tree = tree:add(buf, "RPC Response Introspection")
+        local pvd_tree = tree:add(fpvdi, pvdbuf)
         buf = pvaDecodePVDataType(buf, pvd_tree, is_big_endian, request_id)
     elseif cmd == MONITOR_MESSAGE then
         -- Monitor messages have a changed bitset
@@ -2103,7 +2110,7 @@ local function pvaGenericServerOpDecoder (buf, pkt, tree, is_big_endian, cmd)
             return
         end
     elseif cmd == GET_FIELD_MESSAGE then
-        local pvd_tree = tree:add(buf, "GET Response Introspection")
+        local pvd_tree = tree:add(fpvdi, pvdbuf)
         buf = pvaDecodePVDataType(buf, pvd_tree, is_big_endian, request_id)
     elseif (cmd == PUT_MESSAGE or
             cmd == PUT_GET_MESSAGE) and buf:len() == 0 then
@@ -2119,7 +2126,7 @@ local function pvaGenericServerOpDecoder (buf, pkt, tree, is_big_endian, cmd)
 
     -- Process remaining payload
     if buf and buf:len() > 0 then
-        local pvd_tree = tree:add(buf, "PVData")
+        local pvd_tree = tree:add(fpvd, pvdbuf)
         pvaDecodePVData(buf, pvd_tree, is_big_endian, request_id, bitset)
     end
 end
